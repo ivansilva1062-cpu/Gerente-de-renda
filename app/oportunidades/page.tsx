@@ -1,262 +1,361 @@
-'use client'
+import { NextResponse } from 'next/server'
+import { sql } from '@/lib/db'
 
-import { useState } from 'react'
+/*
+ * API DE OPORTUNIDADES
+ *
+ * Esta API:
+ * - cria a tabela automaticamente
+ * - cadastra fontes reais de renda como oportunidades
+ * - não inventa dinheiro recebido
+ * - não altera o saldo financeiro
+ *
+ * O saldo continua sendo controlado somente por:
+ * /api/earnings
+ */
 
-import { RefreshCw, Search } from 'lucide-react'
+type OpportunityRow = {
+  id: string
+  title: string
+  source: string
+  category: string
+  estimated_value: number | string
+  confidence: number | string
+  status: string
+  discovered_at: string
+  created_at: string
+}
 
-import { useAgent } from '@/components/agent-provider'
-import { PageHeader } from '@/components/page-header'
-import { OpportunityItem } from '@/components/opportunity-item'
-
-import { Card, CardContent } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-
-import { categoryLabel } from '@/lib/labels'
-import { usd } from '@/lib/format'
-
-import type { OpportunityCategory } from '@/lib/types'
-
-type Filter = 'all' | OpportunityCategory
-
-const filters: {
-  key: Filter
-  label: string
-}[] = [
+/*
+ * FONTES INICIAIS
+ *
+ * O valor é 0 porque ainda não existe
+ * uma tarefa/pagamento confirmado.
+ *
+ * Isso serve para o sistema começar
+ * a trabalhar com fontes reais sem
+ * fabricar ganhos.
+ */
+const seedOpportunities = [
   {
-    key: 'all',
-    label: 'Todas',
+    id: 'source-prolific',
+    title: 'Prolific — estudos pagos',
+    source: 'Prolific',
+    category: 'surveys',
+    estimatedValue: 0,
+    confidence: 95,
   },
   {
-    key: 'microtasks',
-    label: categoryLabel.microtasks,
+    id: 'source-usertesting',
+    title: 'UserTesting — testes de sites e aplicativos',
+    source: 'UserTesting',
+    category: 'testing',
+    estimatedValue: 0,
+    confidence: 95,
   },
   {
-    key: 'freelance',
-    label: categoryLabel.freelance,
+    id: 'source-clickworker',
+    title: 'Clickworker — microtarefas',
+    source: 'Clickworker',
+    category: 'microtasks',
+    estimatedValue: 0,
+    confidence: 95,
   },
   {
-    key: 'surveys',
-    label: categoryLabel.surveys,
-  },
-  {
-    key: 'content',
-    label: categoryLabel.content,
-  },
-  {
-    key: 'affiliate',
-    label: categoryLabel.affiliate,
-  },
-  {
-    key: 'testing',
-    label: categoryLabel.testing,
+    id: 'source-fiverr',
+    title: 'Fiverr — vender serviços',
+    source: 'Fiverr',
+    category: 'freelance',
+    estimatedValue: 0,
+    confidence: 95,
   },
 ]
 
-export default function OpportunitiesPage() {
-  const {
-    opportunities,
-    refreshOpportunities,
-    status,
-  } = useAgent()
+/*
+ * GARANTE QUE A TABELA EXISTE
+ */
+async function ensureTable() {
+  await sql`
+    CREATE TABLE IF NOT EXISTS opportunities (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      source TEXT NOT NULL,
+      category TEXT NOT NULL,
+      estimated_value NUMERIC(12,2) NOT NULL DEFAULT 0,
+      confidence INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'new',
+      discovered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `
+}
 
-  const [
-    filter,
-    setFilter,
-  ] = useState<Filter>('all')
+/*
+ * CADASTRA AS FONTES INICIAIS
+ *
+ * ON CONFLICT impede duplicação.
+ */
+async function seedSources() {
+  for (const opportunity of seedOpportunities) {
+    await sql`
+      INSERT INTO opportunities (
+        id,
+        title,
+        source,
+        category,
+        estimated_value,
+        confidence,
+        status
+      )
+      VALUES (
+        ${opportunity.id},
+        ${opportunity.title},
+        ${opportunity.source},
+        ${opportunity.category},
+        ${opportunity.estimatedValue},
+        ${opportunity.confidence},
+        'new'
+      )
+      ON CONFLICT (id) DO NOTHING
+    `
+  }
+}
 
-  const [
-    refreshing,
-    setRefreshing,
-  ] = useState(false)
+/*
+ * CONVERTE UMA LINHA DO BANCO
+ * PARA O FORMATO USADO PELO FRONT-END.
+ */
+function normalizeOpportunity(
+  row: OpportunityRow,
+) {
+  return {
+    id: row.id,
+    title: row.title,
+    source: row.source,
+    category: row.category,
+    estimatedValue: Number(
+      row.estimated_value ?? 0,
+    ),
+    confidence: Number(
+      row.confidence ?? 0,
+    ),
+    status: row.status,
+    discoveredAt: row.discovered_at,
+    createdAt: row.created_at,
+  }
+}
 
-  const filtered =
-    filter === 'all'
-      ? opportunities
-      : opportunities.filter(
-          (o) =>
-            o.category ===
-            filter,
-        )
+/*
+ * GET
+ *
+ * Consulta as oportunidades.
+ */
+export async function GET() {
+  try {
+    await ensureTable()
+    await seedSources()
 
-  const potential =
-    filtered.reduce(
-      (sum, opportunity) =>
-        sum +
-        Number(
-          opportunity.estimatedValue ??
-            0,
-        ),
-      0,
+    const rows =
+      await sql<OpportunityRow[]>`
+        SELECT
+          id,
+          title,
+          source,
+          category,
+          estimated_value,
+          confidence,
+          status,
+          discovered_at,
+          created_at
+        FROM opportunities
+        ORDER BY discovered_at DESC
+        LIMIT 100
+      `
+
+    const opportunities =
+      rows.map(
+        normalizeOpportunity,
+      )
+
+    return NextResponse.json({
+      success: true,
+      opportunities,
+      total:
+        opportunities.length,
+    })
+  } catch (error) {
+    console.error(
+      'Erro ao consultar oportunidades:',
+      error,
     )
 
-  async function handleRefresh() {
-    if (refreshing) {
-      return
-    }
-
-    setRefreshing(true)
-
-    try {
-      await refreshOpportunities()
-    } finally {
-      setRefreshing(false)
-    }
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Erro ao consultar oportunidades',
+        opportunities: [],
+      },
+      {
+        status: 500,
+      },
+    )
   }
+}
 
-  return (
-    <div>
-      <PageHeader
-        title="Oportunidades"
-        description="Oportunidades encontradas pelo sistema. Os valores exibidos são estimativas e não representam dinheiro recebido."
-      />
+/*
+ * POST
+ *
+ * Permite registrar uma nova oportunidade
+ * no banco.
+ *
+ * IMPORTANTE:
+ * registrar uma oportunidade NÃO significa
+ * que o dinheiro foi recebido.
+ */
+export async function POST(
+  request: Request,
+) {
+  try {
+    await ensureTable()
 
-      <Card className="mb-6">
-        <CardContent className="flex flex-col gap-5 p-5 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-sm text-muted-foreground">
-              Potencial estimado
-            </p>
+    const body =
+      await request.json()
 
-            <p className="font-mono text-2xl font-semibold tabular-nums text-success">
-              {usd(potential)}
-            </p>
+    const {
+      id,
+      title,
+      source,
+      category,
+      estimatedValue,
+      confidence,
+    } = body
 
-            <p className="mt-1 text-xs text-muted-foreground">
-              Estimativa das oportunidades
-              atualmente filtradas.
-            </p>
-          </div>
+    if (
+      !id ||
+      !title ||
+      !source ||
+      !category
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'Dados da oportunidade incompletos',
+        },
+        {
+          status: 400,
+        },
+      )
+    }
 
-          <div className="flex items-center gap-3">
-            <div className="text-right">
-              <p className="text-sm text-muted-foreground">
-                Oportunidades
-              </p>
+    const value =
+      Number(
+        estimatedValue ?? 0,
+      )
 
-              <p className="font-mono text-2xl font-semibold tabular-nums">
-                {filtered.length}
-              </p>
-            </div>
+    const confidenceValue =
+      Number(
+        confidence ?? 0,
+      )
 
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={
-                handleRefresh
-              }
-              disabled={
-                refreshing ||
-                status !==
-                  'working'
-              }
-            >
-              <RefreshCw
-                className={
-                  refreshing
-                    ? 'animate-spin'
-                    : ''
-                }
-              />
+    if (
+      !Number.isFinite(value) ||
+      value < 0
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'Valor estimado inválido',
+        },
+        {
+          status: 400,
+        },
+      )
+    }
 
-              {refreshing
-                ? 'Atualizando'
-                : 'Atualizar'}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+    if (
+      !Number.isInteger(
+        confidenceValue,
+      ) ||
+      confidenceValue < 0 ||
+      confidenceValue > 100
+    ) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'Confiança deve estar entre 0 e 100',
+        },
+        {
+          status: 400,
+        },
+      )
+    }
 
-      <div className="mb-4 flex flex-wrap gap-2">
-        {filters.map(
-          (item) => (
-            <Button
-              key={
-                item.key
-              }
-              size="sm"
-              variant={
-                filter ===
-                item.key
-                  ? 'default'
-                  : 'outline'
-              }
-              onClick={() =>
-                setFilter(
-                  item.key,
-                )
-              }
-            >
-              {item.label}
-            </Button>
-          ),
-        )}
-      </div>
+    const result =
+      await sql<OpportunityRow[]>`
+        INSERT INTO opportunities (
+          id,
+          title,
+          source,
+          category,
+          estimated_value,
+          confidence,
+          status
+        )
+        VALUES (
+          ${id},
+          ${title},
+          ${source},
+          ${category},
+          ${Number(
+            value.toFixed(2),
+          )},
+          ${confidenceValue},
+          'new'
+        )
+        ON CONFLICT (id)
+        DO NOTHING
+        RETURNING
+          id,
+          title,
+          source,
+          category,
+          estimated_value,
+          confidence,
+          status,
+          discovered_at,
+          created_at
+      `
 
-      <div className="mb-4 flex items-center gap-2 text-xs text-muted-foreground">
-        <Search className="size-4" />
+    return NextResponse.json({
+      success: true,
+      inserted:
+        result.length > 0,
+      opportunity:
+        result.length > 0
+          ? normalizeOpportunity(
+              result[0],
+            )
+          : null,
+    })
+  } catch (error) {
+    console.error(
+      'Erro ao registrar oportunidade:',
+      error,
+    )
 
-        <span>
-          O sistema consulta as
-          oportunidades armazenadas
-          no banco de dados.
-        </span>
-      </div>
-
-      <div className="space-y-3">
-        {filtered.length >
-        0 ? (
-          filtered.map(
-            (opportunity) => (
-              <OpportunityItem
-                key={
-                  opportunity.id
-                }
-                opportunity={
-                  opportunity
-                }
-              />
-            ),
-          )
-        ) : (
-          <div className="rounded-lg border border-dashed border-border py-12 text-center">
-            <p className="text-sm font-medium">
-              Nenhuma oportunidade
-              disponível.
-            </p>
-
-            <p className="mt-1 text-xs text-muted-foreground">
-              Quando uma oportunidade
-              válida for registrada
-              no banco, ela aparecerá
-              aqui.
-            </p>
-
-            <Button
-              className="mt-4"
-              size="sm"
-              variant="outline"
-              onClick={
-                handleRefresh
-              }
-              disabled={
-                refreshing ||
-                status !==
-                  'working'
-              }
-            >
-              <RefreshCw
-                className={
-                  refreshing
-                    ? 'animate-spin'
-                    : ''
-                }
-              />
-
-              Verificar novamente
-            </Button>
-          </div>
-        )}
-      </div>
-    </div>
-  )
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Erro ao registrar oportunidade',
+      },
+      {
+        status: 500,
+      },
+    )
+  }
 }
