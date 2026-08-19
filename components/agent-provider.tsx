@@ -56,12 +56,6 @@ const AgentContext =
 const uid = () =>
   Math.random().toString(36).slice(2, 10)
 
-/*
- * O valor abaixo é somente uma estimativa
- * apresentada nas oportunidades.
- *
- * NÃO representa dinheiro recebido.
- */
 const discoveryPool: Array<
   Pick<
     Opportunity,
@@ -117,50 +111,26 @@ export function AgentProvider({
 }: {
   children: React.ReactNode
 }) {
-  /*
-   * O agente começa trabalhando.
-   */
   const [status, setStatus] =
     useState<AgentStatus>('working')
 
-  /*
-   * SALDO REAL
-   *
-   * Começa em zero.
-   * O valor só aumenta quando o pagamento
-   * é confirmado e salvo no banco.
-   */
   const [today, setToday] =
     useState(0)
 
   const [total, setTotal] =
     useState(0)
 
-  /*
-   * OPORTUNIDADES
-   *
-   * estimatedValue é somente estimativa.
-   */
   const [opportunities, setOpportunities] =
     useState<Opportunity[]>(
       seedOpportunities,
     )
 
-  /*
-   * TAREFAS
-   */
   const [tasks, setTasks] =
     useState<Task[]>(seedTasks)
 
-  /*
-   * HISTÓRICO
-   */
   const [activity, setActivity] =
     useState<ActivityEvent[]>([])
 
-  /*
-   * HISTÓRICO FINANCEIRO
-   */
   const [transactions, setTransactions] =
     useState<Transaction[]>([])
 
@@ -173,6 +143,162 @@ export function AgentProvider({
     useRef(status)
 
   statusRef.current = status
+
+  /*
+   * CARREGA O FINANCEIRO DO BANCO
+   *
+   * Quando o site abre ou é atualizado,
+   * consulta /api/earnings.
+   *
+   * O saldo não fica mais preso somente
+   * ao estado temporário do navegador.
+   */
+  useEffect(() => {
+    let cancelled = false
+
+    const loadFinancialData =
+      async () => {
+        try {
+          const response =
+            await fetch(
+              '/api/earnings',
+              {
+                method: 'GET',
+                cache: 'no-store',
+              },
+            )
+
+          if (!response.ok) {
+            throw new Error(
+              'Não foi possível carregar o financeiro',
+            )
+          }
+
+          const data =
+            await response.json()
+
+          if (cancelled) {
+            return
+          }
+
+          const realTotal =
+            Number(
+              data.total ?? 0,
+            )
+
+          setTotal(
+            Number(
+              realTotal.toFixed(2),
+            ),
+          )
+
+          const earnings =
+            Array.isArray(
+              data.earnings,
+            )
+              ? data.earnings
+              : []
+
+          /*
+           * Calcula somente os pagamentos
+           * realizados hoje.
+           */
+          const now =
+            new Date()
+
+          const startOfToday =
+            new Date(
+              now.getFullYear(),
+              now.getMonth(),
+              now.getDate(),
+            )
+
+          const todayTotal =
+            earnings.reduce(
+              (
+                sum: number,
+                earning: {
+                  amount:
+                    | number
+                    | string
+                  created_at: string
+                },
+              ) => {
+                const date =
+                  new Date(
+                    earning.created_at,
+                  )
+
+                if (
+                  date >=
+                  startOfToday
+                ) {
+                  return (
+                    sum +
+                    Number(
+                      earning.amount,
+                    )
+                  )
+                }
+
+                return sum
+              },
+              0,
+            )
+
+          setToday(
+            Number(
+              todayTotal.toFixed(2),
+            ),
+          )
+
+          /*
+           * Reconstrói as transações
+           * salvas no banco.
+           */
+          setTransactions(
+            earnings.map(
+              (
+                earning: {
+                  id: string
+                  description: string
+                  source: string
+                  amount:
+                    | number
+                    | string
+                  created_at: string
+                },
+              ) => ({
+                id: earning.id,
+                description:
+                  earning.description,
+                source:
+                  earning.source,
+                amount:
+                  Number(
+                    earning.amount,
+                  ),
+                at:
+                  earning.created_at,
+                status:
+                  'confirmed' as const,
+              }),
+            ),
+          )
+        } catch (error) {
+          console.error(
+            'Erro ao carregar saldo real:',
+            error,
+          )
+        }
+      }
+
+    loadFinancialData()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   /*
    * REGISTRO DE ATIVIDADE
@@ -204,15 +330,6 @@ export function AgentProvider({
    *
    * Esta é a única função que adiciona
    * dinheiro ao saldo.
-   *
-   * A oportunidade NÃO adiciona dinheiro.
-   *
-   * Iniciar tarefa NÃO adiciona dinheiro.
-   *
-   * Concluir tarefa NÃO adiciona dinheiro.
-   *
-   * O pagamento precisa ser confirmado
-   * e enviado para a API.
    */
   const registerConfirmedEarning =
     useCallback(
@@ -229,23 +346,28 @@ export function AgentProvider({
         }
 
         const earned =
-          Number(amount.toFixed(2))
+          Number(
+            amount.toFixed(2),
+          )
 
         try {
           const response =
-            await fetch('/api/earnings', {
-              method: 'POST',
-              headers: {
-                'Content-Type':
-                  'application/json',
+            await fetch(
+              '/api/earnings',
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type':
+                    'application/json',
+                },
+                body: JSON.stringify({
+                  id: uid(),
+                  description,
+                  source,
+                  amount: earned,
+                }),
               },
-              body: JSON.stringify({
-                id: uid(),
-                description,
-                source,
-                amount: earned,
-              }),
-            })
+            )
 
           if (!response.ok) {
             throw new Error(
@@ -254,35 +376,41 @@ export function AgentProvider({
           }
 
           /*
-           * Só atualiza o saldo local
-           * depois que o banco confirmou
-           * o registro.
+           * Só altera o painel depois
+           * que a API confirmou o registro.
            */
           setToday((value) =>
             Number(
-              (value + earned).toFixed(2),
+              (
+                value +
+                earned
+              ).toFixed(2),
             ),
           )
 
           setTotal((value) =>
             Number(
-              (value + earned).toFixed(2),
+              (
+                value +
+                earned
+              ).toFixed(2),
             ),
           )
 
-          setTransactions((prev) =>
-            [
-              {
-                id: uid(),
-                description,
-                source,
-                amount: earned,
-                at: new Date().toISOString(),
-                status:
-                  'confirmed' as const,
-              },
-              ...prev,
-            ].slice(0, 40),
+          setTransactions(
+            (prev) =>
+              [
+                {
+                  id: uid(),
+                  description,
+                  source,
+                  amount: earned,
+                  at: new Date().toISOString(),
+                  status:
+                    'confirmed' as const,
+                },
+                ...prev,
+              ].slice(0, 40),
           )
 
           pushActivity({
@@ -306,10 +434,6 @@ export function AgentProvider({
    */
   const tick =
     useCallback(() => {
-      /*
-       * Só para quando o usuário
-       * apertar "Parar atividades".
-       */
       if (
         statusRef.current !==
         'working'
@@ -323,11 +447,12 @@ export function AgentProvider({
       /*
        * AVANÇA TAREFAS
        *
-       * Terminar tarefa NÃO gera dinheiro.
+       * Concluir tarefa NÃO gera dinheiro.
        */
       setTasks((prev) => {
-        let completed: Task | null =
-          null
+        let completed:
+          | Task
+          | null = null
 
         const next =
           prev.map((task) => {
@@ -340,7 +465,8 @@ export function AgentProvider({
 
             const inc =
               6 +
-              Math.random() * 14
+              Math.random() *
+                14
 
             const progress =
               Math.min(
@@ -378,9 +504,6 @@ export function AgentProvider({
               `Tarefa concluída: ${done.title}. Valor estimado: US$ ${done.estimatedValue.toFixed(2)}. Aguardando confirmação real do pagamento.`,
           })
 
-          /*
-           * NÃO adicionamos dinheiro aqui.
-           */
           return next.filter(
             (task) =>
               task.id !==
@@ -394,8 +517,7 @@ export function AgentProvider({
       /*
        * DESCOBERTA DE OPORTUNIDADES
        *
-       * Ainda é uma simulação local.
-       * Depois substituiremos por fontes reais.
+       * Ainda é simulação local.
        */
       if (roll > 0.55) {
         const template =
@@ -491,9 +613,6 @@ export function AgentProvider({
 
       /*
        * PENDÊNCIA
-       *
-       * Pode exigir intervenção humana.
-       * Isso NÃO para o agente inteiro.
        */
       if (roll > 0.9) {
         setTasks((prev) => {
@@ -535,8 +654,6 @@ export function AgentProvider({
 
   /*
    * EXECUÇÃO CONTÍNUA
-   *
-   * Verifica o estado a cada 3,5 segundos.
    */
   useEffect(() => {
     const interval =
@@ -552,7 +669,7 @@ export function AgentProvider({
   }, [tick])
 
   /*
-   * PARAR ATIVIDADES
+   * PARAR
    */
   const stop =
     useCallback(() => {
@@ -566,7 +683,7 @@ export function AgentProvider({
     }, [pushActivity])
 
   /*
-   * CONTINUAR TRABALHANDO
+   * CONTINUAR
    */
   const resume =
     useCallback(() => {
@@ -621,7 +738,7 @@ export function AgentProvider({
     )
 
   /*
-   * INICIAR OPORTUNIDADE MANUALMENTE
+   * INICIAR OPORTUNIDADE
    */
   const startOpportunity =
     useCallback(
@@ -706,10 +823,7 @@ export function AgentProvider({
     )
 
   /*
-   * REGRA PRINCIPAL DO AGENTE
-   *
-   * Se o usuário não apertou PARAR,
-   * o agente continua TRABALHANDO.
+   * REGRA PRINCIPAL
    */
   useEffect(() => {
     if (
@@ -720,9 +834,6 @@ export function AgentProvider({
     }
   }, [status])
 
-  /*
-   * TAREFAS EM EXECUÇÃO
-   */
   const runningTasks =
     useMemo(
       () =>
@@ -734,9 +845,6 @@ export function AgentProvider({
       [tasks],
     )
 
-  /*
-   * TAREFAS PENDENTES
-   */
   const pendingTasks =
     useMemo(
       () =>
