@@ -43,9 +43,15 @@ interface AgentContextValue {
   resolvePending: (taskId: string) => void
   startOpportunity: (opportunityId: string) => void
   toggleIntegration: (key: string) => void
+  registerConfirmedEarning: (
+    amount: number,
+    description: string,
+    source: string,
+  ) => Promise<void>
 }
 
-const AgentContext = createContext<AgentContextValue | null>(null)
+const AgentContext =
+  createContext<AgentContextValue | null>(null)
 
 const uid = () =>
   Math.random().toString(36).slice(2, 10)
@@ -113,10 +119,6 @@ export function AgentProvider({
 }) {
   /*
    * O agente começa trabalhando.
-   *
-   * IMPORTANTE:
-   * ficar sem tarefa ativa NÃO significa parar.
-   * Nesse momento ele continua procurando oportunidades.
    */
   const [status, setStatus] =
     useState<AgentStatus>('working')
@@ -124,9 +126,9 @@ export function AgentProvider({
   /*
    * SALDO REAL
    *
-   * Começa sempre em zero.
-   *
-   * Não usamos valores iniciais fictícios.
+   * Começa em zero.
+   * O valor só aumenta quando o pagamento
+   * é confirmado e salvo no banco.
    */
   const [today, setToday] =
     useState(0)
@@ -137,8 +139,7 @@ export function AgentProvider({
   /*
    * OPORTUNIDADES
    *
-   * O estimatedValue é apenas estimativa.
-   * Não é dinheiro recebido.
+   * estimatedValue é somente estimativa.
    */
   const [opportunities, setOpportunities] =
     useState<Opportunity[]>(
@@ -147,23 +148,18 @@ export function AgentProvider({
 
   /*
    * TAREFAS
-   *
-   * Mantemos as tarefas iniciais do projeto
-   * para testar a interface.
    */
   const [tasks, setTasks] =
     useState<Task[]>(seedTasks)
 
   /*
-   * Histórico de atividades começa vazio.
+   * HISTÓRICO
    */
   const [activity, setActivity] =
     useState<ActivityEvent[]>([])
 
   /*
-   * Histórico financeiro começa vazio.
-   *
-   * Nenhum valor fictício entra aqui.
+   * HISTÓRICO FINANCEIRO
    */
   const [transactions, setTransactions] =
     useState<Transaction[]>([])
@@ -206,24 +202,21 @@ export function AgentProvider({
   /*
    * REGISTRO DE PAGAMENTO CONFIRMADO
    *
-   * ESTA É A ÚNICA FUNÇÃO QUE PODE
-   * ADICIONAR DINHEIRO AO SALDO.
+   * Esta é a única função que adiciona
+   * dinheiro ao saldo.
    *
-   * Encontrar oportunidade:
-   * NÃO adiciona dinheiro.
+   * A oportunidade NÃO adiciona dinheiro.
    *
-   * Iniciar tarefa:
-   * NÃO adiciona dinheiro.
+   * Iniciar tarefa NÃO adiciona dinheiro.
    *
-   * Concluir tarefa:
-   * NÃO adiciona dinheiro.
+   * Concluir tarefa NÃO adiciona dinheiro.
    *
-   * Somente pagamento confirmado:
-   * ADICIONA dinheiro.
+   * O pagamento precisa ser confirmado
+   * e enviado para a API.
    */
   const registerConfirmedEarning =
     useCallback(
-      (
+      async (
         amount: number,
         description: string,
         source: string,
@@ -238,39 +231,72 @@ export function AgentProvider({
         const earned =
           Number(amount.toFixed(2))
 
-        setToday((value) =>
-          Number(
-            (value + earned).toFixed(2),
-          ),
-        )
+        try {
+          const response =
+            await fetch('/api/earnings', {
+              method: 'POST',
+              headers: {
+                'Content-Type':
+                  'application/json',
+              },
+              body: JSON.stringify({
+                id: uid(),
+                description,
+                source,
+                amount: earned,
+              }),
+            })
 
-        setTotal((value) =>
-          Number(
-            (value + earned).toFixed(2),
-          ),
-        )
+          if (!response.ok) {
+            throw new Error(
+              'Falha ao registrar pagamento',
+            )
+          }
 
-        setTransactions((prev) =>
-          [
-            {
-              id: uid(),
-              description,
-              source,
-              amount: earned,
-              at: new Date().toISOString(),
-              status:
-                'confirmed' as const,
-            },
-            ...prev,
-          ].slice(0, 40),
-        )
+          /*
+           * Só atualiza o saldo local
+           * depois que o banco confirmou
+           * o registro.
+           */
+          setToday((value) =>
+            Number(
+              (value + earned).toFixed(2),
+            ),
+          )
 
-        pushActivity({
-          kind: 'earning',
-          message:
-            `Pagamento confirmado — ${description}`,
-          amount: earned,
-        })
+          setTotal((value) =>
+            Number(
+              (value + earned).toFixed(2),
+            ),
+          )
+
+          setTransactions((prev) =>
+            [
+              {
+                id: uid(),
+                description,
+                source,
+                amount: earned,
+                at: new Date().toISOString(),
+                status:
+                  'confirmed' as const,
+              },
+              ...prev,
+            ].slice(0, 40),
+          )
+
+          pushActivity({
+            kind: 'earning',
+            message:
+              `Pagamento confirmado — ${description}`,
+            amount: earned,
+          })
+        } catch (error) {
+          console.error(
+            'Erro ao registrar pagamento:',
+            error,
+          )
+        }
       },
       [pushActivity],
     )
@@ -281,8 +307,8 @@ export function AgentProvider({
   const tick =
     useCallback(() => {
       /*
-       * Só para quando o usuário apertar
-       * "Parar atividades".
+       * Só para quando o usuário
+       * apertar "Parar atividades".
        */
       if (
         statusRef.current !==
@@ -297,8 +323,7 @@ export function AgentProvider({
       /*
        * AVANÇA TAREFAS
        *
-       * IMPORTANTE:
-       * terminar uma tarefa NÃO gera dinheiro.
+       * Terminar tarefa NÃO gera dinheiro.
        */
       setTasks((prev) => {
         let completed: Task | null =
@@ -369,11 +394,8 @@ export function AgentProvider({
       /*
        * DESCOBERTA DE OPORTUNIDADES
        *
-       * Por enquanto esta parte é somente
-       * uma simulação local para testar o motor.
-       *
-       * Na próxima etapa substituiremos isso
-       * por fontes reais.
+       * Ainda é uma simulação local.
+       * Depois substituiremos por fontes reais.
        */
       if (roll > 0.55) {
         const template =
@@ -470,10 +492,8 @@ export function AgentProvider({
       /*
        * PENDÊNCIA
        *
-       * Uma tarefa pode precisar de
-       * intervenção humana.
-       *
-       * Isso NÃO para o restante do agente.
+       * Pode exigir intervenção humana.
+       * Isso NÃO para o agente inteiro.
        */
       if (roll > 0.9) {
         setTasks((prev) => {
@@ -516,7 +536,7 @@ export function AgentProvider({
   /*
    * EXECUÇÃO CONTÍNUA
    *
-   * O agente verifica o estado a cada 3,5 segundos.
+   * Verifica o estado a cada 3,5 segundos.
    */
   useEffect(() => {
     const interval =
@@ -533,8 +553,6 @@ export function AgentProvider({
 
   /*
    * PARAR ATIVIDADES
-   *
-   * ÚNICA forma normal de pausar o agente.
    */
   const stop =
     useCallback(() => {
@@ -690,17 +708,8 @@ export function AgentProvider({
   /*
    * REGRA PRINCIPAL DO AGENTE
    *
-   * NÃO fazemos mais:
-   *
-   * if (!hasRunning)
-   *   status = waiting
-   *
-   * Porque estar sem tarefas NÃO significa
-   * que o agente parou.
-   *
    * Se o usuário não apertou PARAR,
-   * o agente continua TRABALHANDO,
-   * procurando novas oportunidades.
+   * o agente continua TRABALHANDO.
    */
   useEffect(() => {
     if (
@@ -711,6 +720,9 @@ export function AgentProvider({
     }
   }, [status])
 
+  /*
+   * TAREFAS EM EXECUÇÃO
+   */
   const runningTasks =
     useMemo(
       () =>
@@ -722,6 +734,9 @@ export function AgentProvider({
       [tasks],
     )
 
+  /*
+   * TAREFAS PENDENTES
+   */
   const pendingTasks =
     useMemo(
       () =>
@@ -752,6 +767,7 @@ export function AgentProvider({
       resolvePending,
       startOpportunity,
       toggleIntegration,
+      registerConfirmedEarning,
     }
 
   return (
