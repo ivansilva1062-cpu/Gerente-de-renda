@@ -7,6 +7,8 @@ import {
   Clock,
 } from 'lucide-react'
 
+import { useEffect, useMemo, useState } from 'react'
+
 import { useAgent } from '@/components/agent-provider'
 import { PageHeader } from '@/components/page-header'
 import { StatCard } from '@/components/stat-card'
@@ -22,47 +24,316 @@ import {
 
 import { Badge } from '@/components/ui/badge'
 import { usd, relativeTime } from '@/lib/format'
-import { seedEarningsSeries } from '@/lib/mock-data'
+
+type DatabaseEarning = {
+  id: string
+  description: string
+  source: string
+  amount: number | string
+  created_at: string
+}
 
 export default function FinancialPage() {
   const {
-    today,
-    total,
     transactions,
   } = useAgent()
 
   /*
-   * O gráfico usa somente valores financeiros
-   * que realmente foram registrados.
+   * PAGAMENTOS VINDOS DO BANCO
    *
-   * Enquanto não houver pagamentos confirmados,
-   * permanece em zero.
+   * A página consulta a API sempre que é aberta.
    */
-  const series =
-    seedEarningsSeries.map(
-      (d, i, arr) =>
-        i === arr.length - 1
-          ? {
-              ...d,
-              amount: today,
-            }
-          : d,
+  const [databaseEarnings, setDatabaseEarnings] =
+    useState<DatabaseEarning[]>([])
+
+  const [databaseTotal, setDatabaseTotal] =
+    useState(0)
+
+  const [loading, setLoading] =
+    useState(true)
+
+  const [error, setError] =
+    useState<string | null>(null)
+
+  /*
+   * BUSCAR DADOS DO BANCO
+   */
+  useEffect(() => {
+    let active = true
+
+    async function loadEarnings() {
+      try {
+        setLoading(true)
+        setError(null)
+
+        const response =
+          await fetch('/api/earnings', {
+            method: 'GET',
+            cache: 'no-store',
+          })
+
+        if (!response.ok) {
+          throw new Error(
+            'Não foi possível consultar os ganhos.',
+          )
+        }
+
+        const data =
+          await response.json()
+
+        if (!active) {
+          return
+        }
+
+        const earnings =
+          Array.isArray(data.earnings)
+            ? data.earnings
+            : []
+
+        setDatabaseEarnings(
+          earnings,
+        )
+
+        setDatabaseTotal(
+          Number(data.total ?? 0),
+        )
+      } catch (err) {
+        console.error(
+          'Erro ao carregar financeiro:',
+          err,
+        )
+
+        if (active) {
+          setError(
+            'Não foi possível carregar os dados financeiros do banco.',
+          )
+        }
+      } finally {
+        if (active) {
+          setLoading(false)
+        }
+      }
+    }
+
+    loadEarnings()
+
+    return () => {
+      active = false
+    }
+  }, [])
+
+  /*
+   * PAGAMENTOS CONFIRMADOS
+   *
+   * O banco é a fonte principal.
+   */
+  const confirmed =
+    useMemo(
+      () =>
+        databaseEarnings.map(
+          (earning) => ({
+            id: earning.id,
+            description:
+              earning.description,
+            source:
+              earning.source,
+            amount:
+              Number(earning.amount),
+            at:
+              earning.created_at,
+            status:
+              'confirmed' as const,
+          }),
+        ),
+      [databaseEarnings],
     )
 
   /*
-   * Média baseada somente nos valores registrados.
+   * TOTAL CONFIRMADO
+   *
+   * Vem diretamente do banco.
    */
-  const avg =
-    series.reduce(
-      (sum, d) =>
-        sum + d.amount,
-      0,
-    ) / series.length
+  const total =
+    databaseTotal
 
   /*
-   * Dinheiro que ainda está processando.
+   * VALOR DE HOJE
    *
-   * NÃO entra no saldo confirmado.
+   * Calculado pelos pagamentos registrados
+   * hoje no banco.
+   */
+  const today =
+    useMemo(() => {
+      const now =
+        new Date()
+
+      const year =
+        now.getFullYear()
+
+      const month =
+        now.getMonth()
+
+      const day =
+        now.getDate()
+
+      return confirmed
+        .filter((tx) => {
+          const date =
+            new Date(tx.at)
+
+          return (
+            date.getFullYear() ===
+              year &&
+            date.getMonth() ===
+              month &&
+            date.getDate() ===
+              day
+          )
+        })
+        .reduce(
+          (sum, tx) =>
+            sum + tx.amount,
+          0,
+        )
+    }, [confirmed])
+
+  /*
+   * MÉDIA DOS ÚLTIMOS 14 DIAS
+   */
+  const avg =
+    useMemo(() => {
+      const now =
+        new Date()
+
+      const fourteenDaysAgo =
+        new Date(now)
+
+      fourteenDaysAgo.setDate(
+        now.getDate() - 13,
+      )
+
+      const dailyTotals: Record<
+        string,
+        number
+      > = {}
+
+      confirmed.forEach(
+        (tx) => {
+          const date =
+            new Date(tx.at)
+
+          if (
+            date <
+            fourteenDaysAgo
+          ) {
+            return
+          }
+
+          const key =
+            `${date.getFullYear()}-${String(
+              date.getMonth() + 1,
+            ).padStart(2, '0')}-${String(
+              date.getDate(),
+            ).padStart(2, '0')}`
+
+          dailyTotals[key] =
+            (dailyTotals[key] ?? 0) +
+            tx.amount
+        },
+      )
+
+      const total14 =
+        Object.values(
+          dailyTotals,
+        ).reduce(
+          (sum, value) =>
+            sum + value,
+          0,
+        )
+
+      return total14 / 14
+    }, [confirmed])
+
+  /*
+   * GRÁFICO DOS ÚLTIMOS 14 DIAS
+   *
+   * Agora o gráfico também usa
+   * os pagamentos vindos do banco.
+   */
+  const series =
+    useMemo(() => {
+      const result: {
+        date: string
+        amount: number
+      }[] = []
+
+      const now =
+        new Date()
+
+      for (
+        let i = 13;
+        i >= 0;
+        i--
+      ) {
+        const date =
+          new Date(now)
+
+        date.setHours(
+          0,
+          0,
+          0,
+          0,
+        )
+
+        date.setDate(
+          now.getDate() - i,
+        )
+
+        const year =
+          date.getFullYear()
+
+        const month =
+          date.getMonth()
+
+        const day =
+          date.getDate()
+
+        const amount =
+          confirmed
+            .filter((tx) => {
+              const txDate =
+                new Date(tx.at)
+
+              return (
+                txDate.getFullYear() ===
+                  year &&
+                txDate.getMonth() ===
+                  month &&
+                txDate.getDate() ===
+                  day
+              )
+            })
+            .reduce(
+              (sum, tx) =>
+                sum + tx.amount,
+              0,
+            )
+
+        result.push({
+          date:
+            date.toISOString(),
+          amount,
+        })
+      }
+
+      return result
+    }, [confirmed])
+
+  /*
+   * PAGAMENTOS EM PROCESSAMENTO
+   *
+   * Esses ainda não entram no banco
+   * como ganhos confirmados.
    */
   const processing =
     transactions
@@ -77,16 +348,6 @@ export default function FinancialPage() {
         0,
       )
 
-  /*
-   * Somente pagamentos confirmados.
-   */
-  const confirmed =
-    transactions.filter(
-      (t) =>
-        t.status ===
-        'confirmed',
-    )
-
   return (
     <div>
       <PageHeader
@@ -94,23 +355,45 @@ export default function FinancialPage() {
         description="Acompanhamento dos pagamentos confirmados pelo sistema. Valores em dólar (USD)."
       />
 
+      {error && (
+        <Card className="mb-6 border-destructive">
+          <CardContent className="p-4">
+            <p className="text-sm text-destructive">
+              {error}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           label="Hoje"
-          value={usd(today)}
+          value={
+            loading
+              ? '...'
+              : usd(today)
+          }
           icon={DollarSign}
           accent="success"
         />
 
         <StatCard
           label="Total confirmado"
-          value={usd(total)}
+          value={
+            loading
+              ? '...'
+              : usd(total)
+          }
           icon={Wallet}
         />
 
         <StatCard
           label="Média diária (14d)"
-          value={usd(avg)}
+          value={
+            loading
+              ? '...'
+              : usd(avg)
+          }
           icon={TrendingUp}
         />
 
@@ -129,7 +412,7 @@ export default function FinancialPage() {
           </CardTitle>
 
           <CardDescription>
-            Somente pagamentos registrados pelo sistema
+            Somente pagamentos registrados no banco de dados
           </CardDescription>
         </CardHeader>
 
@@ -147,13 +430,19 @@ export default function FinancialPage() {
           </CardTitle>
 
           <CardDescription>
-            Entradas financeiras realmente confirmadas
+            Entradas financeiras realmente registradas pelo sistema
           </CardDescription>
         </CardHeader>
 
         <CardContent className="space-y-2">
-          {confirmed.length >
-          0 ? (
+          {loading ? (
+            <div className="rounded-lg border border-dashed border-border py-8 text-center">
+              <p className="text-sm text-muted-foreground">
+                Consultando banco de dados...
+              </p>
+            </div>
+          ) : confirmed.length >
+            0 ? (
             confirmed.map(
               (tx) => (
                 <div
