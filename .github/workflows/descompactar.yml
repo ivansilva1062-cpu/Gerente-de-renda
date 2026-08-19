@@ -1,0 +1,45 @@
+name: Descompactar projeto
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  descompactar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar repositório
+        uses: actions/checkout@v4
+
+      - name: Descompactar projeto
+        run: |
+          mkdir -p /tmp/projeto
+          unzip -q gerente-de-renda.zip -d /tmp/projeto
+
+          echo "Conteúdo encontrado:"
+          find /tmp/projeto -maxdepth 2 -type f | head -100
+
+          if [ -d "/tmp/projeto/gerente-de-renda" ]; then
+            cp -R /tmp/projeto/gerente-de-renda/. .
+          else
+            cp -R /tmp/projeto/. .
+          fi
+
+          rm -f gerente-de-renda.zip
+
+      - name: Salvar projeto no GitHub
+        run: |
+          git config user.name "Gerente de Renda"
+          git config user.email "actions@github.com"
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "Nenhuma alteração para salvar."
+          else
+            git commit -m "Montar projeto Gerente de Renda"
+            git push
+          fi
