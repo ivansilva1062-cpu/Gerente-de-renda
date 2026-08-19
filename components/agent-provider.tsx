@@ -22,8 +22,6 @@ import type {
 import {
   DAILY_GOAL,
   seedIntegrations,
-  seedOpportunities,
-  seedTasks,
 } from '@/lib/mock-data'
 
 interface AgentContextValue {
@@ -48,6 +46,7 @@ interface AgentContextValue {
     description: string,
     source: string,
   ) => Promise<void>
+  refreshOpportunities: () => Promise<void>
 }
 
 const AgentContext =
@@ -56,252 +55,115 @@ const AgentContext =
 const uid = () =>
   Math.random().toString(36).slice(2, 10)
 
-const discoveryPool: Array<
-  Pick<
-    Opportunity,
-    'title' | 'source' | 'category' | 'estimatedValue' | 'confidence'
-  >
-> = [
-  {
-    title: 'Moderação de conteúdo (lote)',
-    source: 'DataMark',
-    category: 'microtasks',
-    estimatedValue: 7.5,
-    confidence: 84,
-  },
-  {
-    title: 'Tradução curta PT→EN',
-    source: 'FreelanceHub',
-    category: 'freelance',
-    estimatedValue: 18,
-    confidence: 71,
-  },
-  {
-    title: 'Pesquisa de opinião — fintech',
-    source: 'SurveyLane',
-    category: 'surveys',
-    estimatedValue: 2.9,
-    confidence: 90,
-  },
-  {
-    title: 'Legendagem de vídeo (5 min)',
-    source: 'ContentDesk',
-    category: 'content',
-    estimatedValue: 12,
-    confidence: 77,
-  },
-  {
-    title: 'Teste beta de aplicativo web',
-    source: 'UserTrials',
-    category: 'testing',
-    estimatedValue: 20,
-    confidence: 58,
-  },
-  {
-    title: 'Indicação afiliada — curso online',
-    source: 'PartnerNet',
-    category: 'affiliate',
-    estimatedValue: 34,
-    confidence: 52,
-  },
-]
+/*
+ * TIPOS INTERNOS DA API DE GANHOS
+ */
+type DatabaseEarning = {
+  id: string
+  description: string
+  source: string
+  amount: number | string
+  created_at: string
+}
 
+/*
+ * PROVIDER PRINCIPAL
+ *
+ * IMPORTANTE:
+ *
+ * Esta versão NÃO cria oportunidades fictícias.
+ *
+ * Esta versão NÃO cria dinheiro fictício.
+ *
+ * Esta versão NÃO considera que uma tarefa concluída
+ * seja automaticamente um pagamento.
+ *
+ * O dinheiro só entra depois de confirmação real
+ * através da API /api/earnings.
+ */
 export function AgentProvider({
   children,
 }: {
   children: React.ReactNode
 }) {
+  /*
+   * STATUS
+   *
+   * O agente começa trabalhando.
+   */
   const [status, setStatus] =
     useState<AgentStatus>('working')
 
+  /*
+   * SALDO
+   *
+   * Começa em zero.
+   *
+   * Será atualizado pelo banco.
+   */
   const [today, setToday] =
     useState(0)
 
   const [total, setTotal] =
     useState(0)
 
+  /*
+   * OPORTUNIDADES
+   *
+   * Começa vazio.
+   *
+   * Nenhuma oportunidade é inventada
+   * pelo navegador.
+   */
   const [opportunities, setOpportunities] =
-    useState<Opportunity[]>(
-      seedOpportunities,
-    )
+    useState<Opportunity[]>([])
 
+  /*
+   * TAREFAS
+   *
+   * Começa vazio.
+   *
+   * Só nasce uma tarefa quando uma
+   * oportunidade real é iniciada.
+   */
   const [tasks, setTasks] =
-    useState<Task[]>(seedTasks)
+    useState<Task[]>([])
 
+  /*
+   * HISTÓRICO
+   */
   const [activity, setActivity] =
     useState<ActivityEvent[]>([])
 
+  /*
+   * TRANSAÇÕES
+   *
+   * São carregadas do banco.
+   */
   const [transactions, setTransactions] =
     useState<Transaction[]>([])
 
+  /*
+   * INTEGRAÇÕES
+   */
   const [integrations, setIntegrations] =
     useState<Integration[]>(
       seedIntegrations,
     )
 
+  /*
+   * REFERÊNCIA DO STATUS
+   *
+   * Permite que o agente saiba se
+   * o usuário apertou PARAR.
+   */
   const statusRef =
     useRef(status)
 
   statusRef.current = status
 
   /*
-   * CARREGA O FINANCEIRO DO BANCO
-   *
-   * Quando o site abre ou é atualizado,
-   * consulta /api/earnings.
-   *
-   * O saldo não fica mais preso somente
-   * ao estado temporário do navegador.
-   */
-  useEffect(() => {
-    let cancelled = false
-
-    const loadFinancialData =
-      async () => {
-        try {
-          const response =
-            await fetch(
-              '/api/earnings',
-              {
-                method: 'GET',
-                cache: 'no-store',
-              },
-            )
-
-          if (!response.ok) {
-            throw new Error(
-              'Não foi possível carregar o financeiro',
-            )
-          }
-
-          const data =
-            await response.json()
-
-          if (cancelled) {
-            return
-          }
-
-          const realTotal =
-            Number(
-              data.total ?? 0,
-            )
-
-          setTotal(
-            Number(
-              realTotal.toFixed(2),
-            ),
-          )
-
-          const earnings =
-            Array.isArray(
-              data.earnings,
-            )
-              ? data.earnings
-              : []
-
-          /*
-           * Calcula somente os pagamentos
-           * realizados hoje.
-           */
-          const now =
-            new Date()
-
-          const startOfToday =
-            new Date(
-              now.getFullYear(),
-              now.getMonth(),
-              now.getDate(),
-            )
-
-          const todayTotal =
-            earnings.reduce(
-              (
-                sum: number,
-                earning: {
-                  amount:
-                    | number
-                    | string
-                  created_at: string
-                },
-              ) => {
-                const date =
-                  new Date(
-                    earning.created_at,
-                  )
-
-                if (
-                  date >=
-                  startOfToday
-                ) {
-                  return (
-                    sum +
-                    Number(
-                      earning.amount,
-                    )
-                  )
-                }
-
-                return sum
-              },
-              0,
-            )
-
-          setToday(
-            Number(
-              todayTotal.toFixed(2),
-            ),
-          )
-
-          /*
-           * Reconstrói as transações
-           * salvas no banco.
-           */
-          setTransactions(
-            earnings.map(
-              (
-                earning: {
-                  id: string
-                  description: string
-                  source: string
-                  amount:
-                    | number
-                    | string
-                  created_at: string
-                },
-              ) => ({
-                id: earning.id,
-                description:
-                  earning.description,
-                source:
-                  earning.source,
-                amount:
-                  Number(
-                    earning.amount,
-                  ),
-                at:
-                  earning.created_at,
-                status:
-                  'confirmed' as const,
-              }),
-            ),
-          )
-        } catch (error) {
-          console.error(
-            'Erro ao carregar saldo real:',
-            error,
-          )
-        }
-      }
-
-    loadFinancialData()
-
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  /*
-   * REGISTRO DE ATIVIDADE
+   * REGISTRA ATIVIDADE
    */
   const pushActivity =
     useCallback(
@@ -326,10 +188,243 @@ export function AgentProvider({
     )
 
   /*
+   * CARREGA GANHOS DO BANCO
+   */
+  const refreshEarnings =
+    useCallback(
+      async () => {
+        try {
+          const response =
+            await fetch(
+              '/api/earnings',
+              {
+                method: 'GET',
+                cache: 'no-store',
+              },
+            )
+
+          if (!response.ok) {
+            throw new Error(
+              'Falha ao consultar ganhos',
+            )
+          }
+
+          const data =
+            await response.json()
+
+          const rows =
+            Array.isArray(
+              data.earnings,
+            )
+              ? data.earnings
+              : []
+
+          const normalized: Transaction[] =
+            rows.map(
+              (
+                earning: DatabaseEarning,
+              ) => ({
+                id:
+                  earning.id,
+                description:
+                  earning.description,
+                source:
+                  earning.source,
+                amount:
+                  Number(
+                    earning.amount,
+                  ),
+                at:
+                  earning.created_at,
+                status:
+                  'confirmed' as const,
+              }),
+            )
+
+          setTransactions(
+            normalized,
+          )
+
+          /*
+           * TOTAL CONFIRMADO
+           */
+          setTotal(
+            Number(
+              data.total ?? 0,
+            ),
+          )
+
+          /*
+           * TOTAL DE HOJE
+           */
+          const now =
+            new Date()
+
+          const todayValue =
+            normalized
+              .filter(
+                (tx) => {
+                  const date =
+                    new Date(
+                      tx.at,
+                    )
+
+                  return (
+                    date.getFullYear() ===
+                      now.getFullYear() &&
+                    date.getMonth() ===
+                      now.getMonth() &&
+                    date.getDate() ===
+                      now.getDate()
+                  )
+                },
+              )
+              .reduce(
+                (
+                  sum,
+                  tx,
+                ) =>
+                  sum +
+                  tx.amount,
+                0,
+              )
+
+          setToday(
+            Number(
+              todayValue.toFixed(
+                2,
+              ),
+            ),
+          )
+        } catch (error) {
+          console.error(
+            'Erro ao carregar ganhos:',
+            error,
+          )
+        }
+      },
+      [],
+    )
+
+  /*
+   * CARREGA OPORTUNIDADES
+   *
+   * A fonte será o endpoint:
+   *
+   * /api/opportunities
+   *
+   * Se ainda não existir, o agente
+   * simplesmente permanece sem
+   * oportunidades.
+   *
+   * Isso é proposital para não
+   * inventarmos dados.
+   */
+  const refreshOpportunities =
+    useCallback(
+      async () => {
+        if (
+          statusRef.current !==
+          'working'
+        ) {
+          return
+        }
+
+        try {
+          const response =
+            await fetch(
+              '/api/opportunities',
+              {
+                method: 'GET',
+                cache: 'no-store',
+              },
+            )
+
+          /*
+           * Endpoint ainda não configurado.
+           *
+           * Não criamos oportunidades
+           * falsas nesse caso.
+           */
+          if (
+            response.status ===
+            404
+          ) {
+            setOpportunities(
+              [],
+            )
+
+            return
+          }
+
+          if (!response.ok) {
+            throw new Error(
+              'Falha ao consultar oportunidades',
+            )
+          }
+
+          const data =
+            await response.json()
+
+          const incoming =
+            Array.isArray(
+              data.opportunities,
+            )
+              ? data.opportunities
+              : []
+
+          /*
+           * Mantém somente oportunidades
+           * com estrutura básica válida.
+           */
+          const valid =
+            incoming.filter(
+              (op: Opportunity) =>
+                Boolean(
+                  op.id &&
+                  op.title &&
+                  op.source &&
+                  op.category &&
+                  Number.isFinite(
+                    Number(
+                      op.estimatedValue,
+                    ),
+                  ),
+                ),
+            )
+
+          setOpportunities(
+            valid.slice(0, 50),
+          )
+
+          if (
+            valid.length > 0
+          ) {
+            pushActivity({
+              kind:
+                'discovery',
+              message:
+                `${valid.length} oportunidade(s) legítima(s) disponível(is).`,
+            })
+          }
+        } catch (error) {
+          console.error(
+            'Erro ao consultar oportunidades:',
+            error,
+          )
+        }
+      },
+      [pushActivity],
+    )
+
+  /*
    * REGISTRO DE PAGAMENTO CONFIRMADO
    *
-   * Esta é a única função que adiciona
-   * dinheiro ao saldo.
+   * ESTA É A ÚNICA FUNÇÃO QUE
+   * ALTERA O SALDO.
+   *
+   * Ela envia o pagamento para
+   * /api/earnings.
    */
   const registerConfirmedEarning =
     useCallback(
@@ -339,447 +434,155 @@ export function AgentProvider({
         source: string,
       ) => {
         if (
-          !Number.isFinite(amount) ||
+          !Number.isFinite(
+            amount,
+          ) ||
           amount <= 0
         ) {
-          return
+          throw new Error(
+            'Valor de pagamento inválido',
+          )
         }
 
         const earned =
           Number(
-            amount.toFixed(2),
+            amount.toFixed(
+              2,
+            ),
           )
 
-        try {
-          const response =
-            await fetch(
-              '/api/earnings',
-              {
-                method: 'POST',
-                headers: {
-                  'Content-Type':
-                    'application/json',
-                },
-                body: JSON.stringify({
-                  id: uid(),
-                  description,
-                  source,
-                  amount: earned,
-                }),
+        const id =
+          uid()
+
+        const response =
+          await fetch(
+            '/api/earnings',
+            {
+              method:
+                'POST',
+              headers: {
+                'Content-Type':
+                  'application/json',
               },
-            )
-
-          if (!response.ok) {
-            throw new Error(
-              'Falha ao registrar pagamento',
-            )
-          }
-
-          /*
-           * Só altera o painel depois
-           * que a API confirmou o registro.
-           */
-          setToday((value) =>
-            Number(
-              (
-                value +
-                earned
-              ).toFixed(2),
-            ),
+              body:
+                JSON.stringify(
+                  {
+                    id,
+                    description,
+                    source,
+                    amount:
+                      earned,
+                  },
+                ),
+            },
           )
 
-          setTotal((value) =>
-            Number(
-              (
-                value +
-                earned
-              ).toFixed(2),
-            ),
-          )
-
-          setTransactions(
-            (prev) =>
-              [
-                {
-                  id: uid(),
-                  description,
-                  source,
-                  amount: earned,
-                  at: new Date().toISOString(),
-                  status:
-                    'confirmed' as const,
-                },
-                ...prev,
-              ].slice(0, 40),
-          )
-
-          pushActivity({
-            kind: 'earning',
-            message:
-              `Pagamento confirmado — ${description}`,
-            amount: earned,
-          })
-        } catch (error) {
-          console.error(
-            'Erro ao registrar pagamento:',
-            error,
-          )
-        }
-      },
-      [pushActivity],
-    )
-
-  /*
-   * MOTOR DO AGENTE
-   */
-  const tick =
-    useCallback(() => {
-      if (
-        statusRef.current !==
-        'working'
-      ) {
-        return
-      }
-
-      const roll =
-        Math.random()
-
-      /*
-       * AVANÇA TAREFAS
-       *
-       * Concluir tarefa NÃO gera dinheiro.
-       */
-      setTasks((prev) => {
-        let completed:
-          | Task
-          | null = null
-
-        const next =
-          prev.map((task) => {
-            if (
-              task.state !==
-              'running'
-            ) {
-              return task
-            }
-
-            const inc =
-              6 +
-              Math.random() *
-                14
-
-            const progress =
-              Math.min(
-                100,
-                task.progress +
-                  inc,
-              )
-
-            if (
-              progress >= 100 &&
-              !completed
-            ) {
-              completed = {
-                ...task,
-                progress: 100,
-                state: 'done',
-              }
-
-              return completed
-            }
-
-            return {
-              ...task,
-              progress,
-            }
-          })
-
-        if (completed) {
-          const done =
-            completed as Task
-
-          pushActivity({
-            kind: 'system',
-            message:
-              `Tarefa concluída: ${done.title}. Valor estimado: US$ ${done.estimatedValue.toFixed(2)}. Aguardando confirmação real do pagamento.`,
-          })
-
-          return next.filter(
-            (task) =>
-              task.id !==
-              done.id,
+        if (!response.ok) {
+          throw new Error(
+            'Não foi possível registrar o pagamento',
           )
         }
 
-        return next
-      })
-
-      /*
-       * DESCOBERTA DE OPORTUNIDADES
-       *
-       * Ainda é simulação local.
-       */
-      if (roll > 0.55) {
-        const template =
-          discoveryPool[
-            Math.floor(
-              Math.random() *
-                discoveryPool.length,
-            )
-          ]
-
-        const op: Opportunity = {
-          id: uid(),
-          ...template,
-          status: 'new',
-          discoveredAt:
-            new Date().toISOString(),
-        }
-
-        setOpportunities(
-          (prev) =>
-            [op, ...prev].slice(
-              0,
-              40,
-            ),
-        )
+        /*
+         * Só atualiza o estado local
+         * depois que a API respondeu
+         * com sucesso.
+         */
+        await refreshEarnings()
 
         pushActivity({
-          kind: 'discovery',
+          kind:
+            'earning',
           message:
-            `Nova oportunidade encontrada em ${op.source}. Valor estimado: US$ ${op.estimatedValue.toFixed(2)}`,
-        })
-      }
-
-      /*
-       * INICIA UMA OPORTUNIDADE
-       */
-      if (roll > 0.7) {
-        setOpportunities(
-          (prev) => {
-            const candidate =
-              prev.find(
-                (o) =>
-                  o.status ===
-                  'new',
-              )
-
-            if (!candidate) {
-              return prev
-            }
-
-            setTasks(
-              (tks) => [
-                {
-                  id: uid(),
-                  title:
-                    candidate.title,
-                  source:
-                    candidate.source,
-                  state:
-                    'running',
-                  estimatedValue:
-                    candidate.estimatedValue,
-                  progress:
-                    Math.random() *
-                    20,
-                  startedAt:
-                    new Date().toISOString(),
-                },
-                ...tks,
-              ],
-            )
-
-            pushActivity({
-              kind: 'start',
-              message:
-                `Iniciada tarefa — ${candidate.title}`,
-            })
-
-            return prev.map(
-              (o) =>
-                o.id ===
-                candidate.id
-                  ? {
-                      ...o,
-                      status:
-                        'running',
-                    }
-                  : o,
-            )
-          },
-        )
-      }
-
-      /*
-       * PENDÊNCIA
-       */
-      if (roll > 0.9) {
-        setTasks((prev) => {
-          const candidate =
-            prev.find(
-              (t) =>
-                t.state ===
-                'running',
-            )
-
-          if (!candidate) {
-            return prev
-          }
-
-          pushActivity({
-            kind: 'pending',
-            message:
-              `Tarefa marcada como pendente — ${candidate.source}`,
-          })
-
-          return prev.map(
-            (t) =>
-              t.id ===
-                candidate.id
-                ? {
-                    ...t,
-                    state:
-                      'pending',
-                    pendingReason:
-                      'A plataforma exige uma ação manual (verificação ou confirmação) para prosseguir.',
-                    actionUrl:
-                      undefined,
-                  }
-                : t,
-          )
-        })
-      }
-    }, [pushActivity])
-
-  /*
-   * EXECUÇÃO CONTÍNUA
-   */
-  useEffect(() => {
-    const interval =
-      setInterval(
-        tick,
-        3500,
-      )
-
-    return () =>
-      clearInterval(
-        interval,
-      )
-  }, [tick])
-
-  /*
-   * PARAR
-   */
-  const stop =
-    useCallback(() => {
-      setStatus('paused')
-
-      pushActivity({
-        kind: 'system',
-        message:
-          'Atividades pausadas pelo usuário',
-      })
-    }, [pushActivity])
-
-  /*
-   * CONTINUAR
-   */
-  const resume =
-    useCallback(() => {
-      setStatus('working')
-
-      pushActivity({
-        kind: 'system',
-        message:
-          'Atividades retomadas — buscando oportunidades',
-      })
-    }, [pushActivity])
-
-  /*
-   * RESOLVER PENDÊNCIA
-   */
-  const resolvePending =
-    useCallback(
-      (taskId: string) => {
-        const task =
-          tasks.find(
-            (t) =>
-              t.id ===
-              taskId,
-          )
-
-        setTasks((prev) =>
-          prev.map(
-            (t) =>
-              t.id === taskId &&
-              t.state ===
-                'pending'
-                ? {
-                    ...t,
-                    state:
-                      'running',
-                    pendingReason:
-                      undefined,
-                    actionUrl:
-                      undefined,
-                  }
-                : t,
-          ),
-        )
-
-        pushActivity({
-          kind: 'resolved',
-          message:
-            `Pendência resolvida — ${task?.title ?? 'tarefa'} retomada`,
+            `Pagamento confirmado — ${description}`,
+          amount:
+            earned,
         })
       },
-      [pushActivity, tasks],
+      [
+        pushActivity,
+        refreshEarnings,
+      ],
     )
 
   /*
    * INICIAR OPORTUNIDADE
+   *
+   * IMPORTANTE:
+   *
+   * Iniciar uma oportunidade NÃO
+   * significa que dinheiro foi ganho.
    */
   const startOpportunity =
     useCallback(
-      (opportunityId: string) => {
+      (
+        opportunityId: string,
+      ) => {
+        if (
+          statusRef.current !==
+          'working'
+        ) {
+          return
+        }
+
         setOpportunities(
           (prev) => {
-            const op =
+            const opportunity =
               prev.find(
                 (o) =>
                   o.id ===
                   opportunityId,
               )
 
-            if (!op) {
+            if (
+              !opportunity
+            ) {
               return prev
             }
 
+            /*
+             * Não permite iniciar
+             * uma oportunidade já em execução.
+             */
+            if (
+              opportunity.status ===
+              'running'
+            ) {
+              return prev
+            }
+
+            const task: Task =
+              {
+                id:
+                  uid(),
+                title:
+                  opportunity.title,
+                source:
+                  opportunity.source,
+                state:
+                  'running',
+                estimatedValue:
+                  Number(
+                    opportunity.estimatedValue,
+                  ),
+                progress:
+                  0,
+                startedAt:
+                  new Date().toISOString(),
+              }
+
             setTasks(
-              (tks) => [
-                {
-                  id: uid(),
-                  title:
-                    op.title,
-                  source:
-                    op.source,
-                  state:
-                    'running',
-                  estimatedValue:
-                    op.estimatedValue,
-                  progress: 0,
-                  startedAt:
-                    new Date().toISOString(),
-                },
-                ...tks,
+              (prevTasks) => [
+                task,
+                ...prevTasks,
               ],
             )
 
             pushActivity({
-              kind: 'start',
+              kind:
+                'start',
               message:
-                `Iniciada tarefa — ${op.title}`,
+                `Tarefa iniciada — ${opportunity.title}`,
             })
 
             return prev.map(
@@ -800,7 +603,105 @@ export function AgentProvider({
     )
 
   /*
-   * INTEGRAÇÕES
+   * RESOLVER PENDÊNCIA
+   */
+  const resolvePending =
+    useCallback(
+      (
+        taskId: string,
+      ) => {
+        const task =
+          tasks.find(
+            (item) =>
+              item.id ===
+              taskId,
+          )
+
+        if (
+          !task ||
+          task.state !==
+            'pending'
+        ) {
+          return
+        }
+
+        setTasks(
+          (prev) =>
+            prev.map(
+              (item) =>
+                item.id ===
+                  taskId
+                  ? {
+                      ...item,
+                      state:
+                        'running',
+                      pendingReason:
+                        undefined,
+                      actionUrl:
+                        undefined,
+                    }
+                  : item,
+            ),
+        )
+
+        pushActivity({
+          kind:
+            'resolved',
+          message:
+            `Pendência resolvida — ${task.title} retomada.`,
+        })
+      },
+      [
+        pushActivity,
+        tasks,
+      ],
+    )
+
+  /*
+   * PARAR
+   */
+  const stop =
+    useCallback(() => {
+      setStatus(
+        'paused',
+      )
+
+      pushActivity({
+        kind:
+          'system',
+        message:
+          'Atividades pausadas pelo usuário.',
+      })
+    }, [pushActivity])
+
+  /*
+   * CONTINUAR
+   */
+  const resume =
+    useCallback(() => {
+      setStatus(
+        'working',
+      )
+
+      pushActivity({
+        kind:
+          'system',
+        message:
+          'Atividades retomadas.',
+      })
+
+      /*
+       * Tenta consultar
+       * oportunidades novamente.
+       */
+      void refreshOpportunities()
+    }, [
+      pushActivity,
+      refreshOpportunities,
+    ])
+
+  /*
+   * ALTERAR INTEGRAÇÃO
    */
   const toggleIntegration =
     useCallback(
@@ -808,14 +709,15 @@ export function AgentProvider({
         setIntegrations(
           (prev) =>
             prev.map(
-              (i) =>
-                i.key === key
+              (integration) =>
+                integration.key ===
+                key
                   ? {
-                      ...i,
+                      ...integration,
                       connected:
-                        !i.connected,
+                        !integration.connected,
                     }
-                  : i,
+                  : integration,
             ),
         )
       },
@@ -823,39 +725,137 @@ export function AgentProvider({
     )
 
   /*
-   * REGRA PRINCIPAL
+   * CARREGAMENTO INICIAL
+   *
+   * Primeiro carrega o banco.
+   *
+   * Depois tenta consultar
+   * oportunidades reais.
    */
   useEffect(() => {
-    if (
-      status !== 'paused' &&
-      status !== 'working'
-    ) {
-      setStatus('working')
-    }
-  }, [status])
+    void refreshEarnings()
+    void refreshOpportunities()
+  }, [
+    refreshEarnings,
+    refreshOpportunities,
+  ])
 
+  /*
+   * ATUALIZA O FINANCEIRO
+   *
+   * A cada 30 segundos.
+   *
+   * Isso NÃO cria dinheiro.
+   * Apenas consulta o banco.
+   */
+  useEffect(() => {
+    const interval =
+      setInterval(
+        () => {
+          void refreshEarnings()
+        },
+        30_000,
+      )
+
+    return () =>
+      clearInterval(
+        interval,
+      )
+  }, [refreshEarnings])
+
+  /*
+   * ATUALIZA OPORTUNIDADES
+   *
+   * A cada 60 segundos.
+   *
+   * Só consulta uma fonte.
+   * Não inventa dados.
+   */
+  useEffect(() => {
+    const interval =
+      setInterval(
+        () => {
+          void refreshOpportunities()
+        },
+        60_000,
+      )
+
+    return () =>
+      clearInterval(
+        interval,
+      )
+  }, [
+    refreshOpportunities,
+  ])
+
+  /*
+   * TAREFAS EM EXECUÇÃO
+   */
   const runningTasks =
     useMemo(
       () =>
         tasks.filter(
-          (t) =>
-            t.state ===
+          (task) =>
+            task.state ===
             'running',
         ),
       [tasks],
     )
 
+  /*
+   * TAREFAS PENDENTES
+   */
   const pendingTasks =
     useMemo(
       () =>
         tasks.filter(
-          (t) =>
-            t.state ===
+          (task) =>
+            task.state ===
             'pending',
         ),
       [tasks],
     )
 
+  /*
+   * VALOR EM PROCESSAMENTO
+   *
+   * Não entra no saldo confirmado.
+   */
+  const processing =
+    transactions
+      .filter(
+        (tx) =>
+          tx.status ===
+          'processing',
+      )
+      .reduce(
+        (sum, tx) =>
+          sum + tx.amount,
+        0,
+      )
+
+  /*
+   * LOG DE ESTADO
+   */
+  useEffect(() => {
+    if (
+      status ===
+      'working'
+    ) {
+      return
+    }
+
+    if (
+      status ===
+      'paused'
+    ) {
+      return
+    }
+  }, [status])
+
+  /*
+   * VALOR FINAL DO CONTEXT
+   */
   const value: AgentContextValue =
     {
       status,
@@ -876,6 +876,7 @@ export function AgentProvider({
       startOpportunity,
       toggleIntegration,
       registerConfirmedEarning,
+      refreshOpportunities,
     }
 
   return (
@@ -887,6 +888,9 @@ export function AgentProvider({
   )
 }
 
+/*
+ * HOOK
+ */
 export function useAgent() {
   const ctx =
     useContext(
