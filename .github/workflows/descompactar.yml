@@ -11,26 +11,52 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Baixar repositorio
+      - name: Baixar repositório
         uses: actions/checkout@v4
 
       - name: Descompactar projeto
+        shell: bash
         run: |
+          set -e
+
+          echo "Criando pasta temporária..."
+          rm -rf /tmp/projeto
           mkdir -p /tmp/projeto
+
+          echo "Descompactando gerente-de-renda.zip..."
           unzip -q "gerente-de-renda.zip" -d /tmp/projeto
 
-          echo "Conteudo encontrado:"
+          echo "Conteúdo encontrado:"
           find /tmp/projeto -maxdepth 2 -type f | head -100
 
-          if [ -d "/tmp/projeto/gerente-de-renda" ]; then
-            cp -R /tmp/projeto/gerente-de-renda/. .
+          shopt -s nullglob dotglob
+
+          itens=(/tmp/projeto/*)
+
+          if [ "${#itens[@]}" -eq 1 ] && [ -d "${itens[0]}" ]; then
+            ORIGEM="${itens[0]}"
           else
-            cp -R /tmp/projeto/. .
+            ORIGEM="/tmp/projeto"
           fi
 
+          echo "Origem do projeto: $ORIGEM"
+
+          echo "Copiando arquivos para o repositório..."
+          rsync -av \
+            --exclude=".git/" \
+            --exclude=".github/" \
+            "$ORIGEM"/ ./
+
+          echo "Removendo o ZIP..."
           rm -f "gerente-de-renda.zip"
 
+          echo "Removendo arquivos temporários..."
+          rm -rf /tmp/projeto
+
+          echo "Projeto preparado."
+
       - name: Salvar projeto no GitHub
+        shell: bash
         run: |
           git config user.name "Gerente de Renda"
           git config user.email "actions@github.com"
@@ -38,7 +64,7 @@ jobs:
           git add -A
 
           if git diff --cached --quiet; then
-            echo "Nenhuma alteracao para salvar."
+            echo "Nenhuma alteração para salvar."
           else
             git commit -m "Montar projeto Gerente de Renda"
             git push
