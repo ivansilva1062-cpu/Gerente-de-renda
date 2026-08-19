@@ -22,7 +22,7 @@ export default function OportunidadesPage() {
   useEffect(() => {
     async function loadOpportunities() {
       try {
-        const response = await fetch('/api/oportunidades')
+        const response = await fetch('/api/opportunities')
 
         if (!response.ok) {
           throw new Error('Erro ao carregar oportunidades')
