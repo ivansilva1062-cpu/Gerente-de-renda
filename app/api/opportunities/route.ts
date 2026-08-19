@@ -4,8 +4,8 @@ import { sql } from '@/lib/db'
 /*
  * API DE OPORTUNIDADES
  *
- * Esta API NÃO considera oportunidade como dinheiro recebido.
- * O valor é apenas uma estimativa.
+ * Oportunidade NÃO significa dinheiro recebido.
+ * Os valores cadastrados são apenas estimativas.
  *
  * O saldo financeiro continua sendo controlado
  * exclusivamente pela API /api/earnings.
@@ -25,6 +25,64 @@ export async function GET() {
         discovered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
+    `
+
+    /*
+     * FONTES INICIAIS
+     *
+     * O valor é 0 porque nenhuma renda
+     * foi confirmada ainda.
+     *
+     * ON CONFLICT impede duplicação.
+     */
+    await sql`
+      INSERT INTO opportunities (
+        id,
+        title,
+        source,
+        category,
+        estimated_value,
+        confidence,
+        status
+      )
+      VALUES
+        (
+          'source-prolific',
+          'Prolific — estudos pagos',
+          'Prolific',
+          'surveys',
+          0,
+          95,
+          'new'
+        ),
+        (
+          'source-usertesting',
+          'UserTesting — testes de sites e aplicativos',
+          'UserTesting',
+          'testing',
+          0,
+          95,
+          'new'
+        ),
+        (
+          'source-clickworker',
+          'Clickworker — microtarefas',
+          'Clickworker',
+          'microtasks',
+          0,
+          95,
+          'new'
+        ),
+        (
+          'source-fiverr',
+          'Fiverr — vender serviços',
+          'Fiverr',
+          'freelance',
+          0,
+          95,
+          'new'
+        )
+      ON CONFLICT (id) DO NOTHING
     `
 
     const rows = await sql`
@@ -48,8 +106,12 @@ export async function GET() {
       title: row.title,
       source: row.source,
       category: row.category,
-      estimatedValue: Number(row.estimated_value ?? 0),
-      confidence: Number(row.confidence ?? 0),
+      estimatedValue: Number(
+        row.estimated_value ?? 0,
+      ),
+      confidence: Number(
+        row.confidence ?? 0,
+      ),
       status: row.status,
       discoveredAt: row.discovered_at,
       createdAt: row.created_at,
@@ -70,6 +132,7 @@ export async function GET() {
       {
         success: false,
         error: 'Erro ao consultar oportunidades',
+        opportunities: [],
       },
       {
         status: 500,
@@ -82,8 +145,7 @@ export async function POST(
   request: Request,
 ) {
   try {
-    const body =
-      await request.json()
+    const body = await request.json()
 
     const {
       id,
@@ -112,11 +174,13 @@ export async function POST(
       )
     }
 
-    const value =
-      Number(estimatedValue ?? 0)
+    const value = Number(
+      estimatedValue ?? 0,
+    )
 
-    const confidenceValue =
-      Number(confidence ?? 0)
+    const confidenceValue = Number(
+      confidence ?? 0,
+    )
 
     if (
       !Number.isFinite(value) ||
@@ -208,25 +272,16 @@ export async function POST(
               id: result[0].id,
               title: result[0].title,
               source: result[0].source,
-              category:
-                result[0].category,
-              estimatedValue:
-                Number(
-                  result[0]
-                    .estimated_value ??
-                    0,
-                ),
-              confidence:
-                Number(
-                  result[0]
-                    .confidence ??
-                    0,
-                ),
-              status:
-                result[0].status,
+              category: result[0].category,
+              estimatedValue: Number(
+                result[0].estimated_value ?? 0,
+              ),
+              confidence: Number(
+                result[0].confidence ?? 0,
+              ),
+              status: result[0].status,
               discoveredAt:
-                result[0]
-                  .discovered_at,
+                result[0].discovered_at,
               createdAt:
                 result[0].created_at,
             }
