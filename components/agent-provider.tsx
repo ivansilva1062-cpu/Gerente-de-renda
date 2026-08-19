@@ -21,11 +21,9 @@ import type {
 
 import {
   DAILY_GOAL,
-  seedActivity,
   seedIntegrations,
   seedOpportunities,
   seedTasks,
-  seedTransactions,
 } from '@/lib/mock-data'
 
 interface AgentContextValue {
@@ -49,8 +47,15 @@ interface AgentContextValue {
 
 const AgentContext = createContext<AgentContextValue | null>(null)
 
-const uid = () => Math.random().toString(36).slice(2, 10)
+const uid = () =>
+  Math.random().toString(36).slice(2, 10)
 
+/*
+ * O valor abaixo é somente uma estimativa
+ * apresentada nas oportunidades.
+ *
+ * NÃO representa dinheiro recebido.
+ */
 const discoveryPool: Array<
   Pick<
     Opportunity,
@@ -106,15 +111,22 @@ export function AgentProvider({
 }: {
   children: React.ReactNode
 }) {
+  /*
+   * O agente começa trabalhando.
+   *
+   * IMPORTANTE:
+   * ficar sem tarefa ativa NÃO significa parar.
+   * Nesse momento ele continua procurando oportunidades.
+   */
   const [status, setStatus] =
     useState<AgentStatus>('working')
 
   /*
-   * IMPORTANTE:
-   * Os valores começam em ZERO.
+   * SALDO REAL
    *
-   * Não usamos mais INITIAL_TODAY ou INITIAL_TOTAL,
-   * pois aqueles valores eram fictícios.
+   * Começa sempre em zero.
+   *
+   * Não usamos valores iniciais fictícios.
    */
   const [today, setToday] =
     useState(0)
@@ -123,25 +135,35 @@ export function AgentProvider({
     useState(0)
 
   /*
-   * As oportunidades continuam podendo ter um
-   * estimatedValue, mas esse valor é apenas uma
-   * estimativa. NÃO é dinheiro recebido.
+   * OPORTUNIDADES
+   *
+   * O estimatedValue é apenas estimativa.
+   * Não é dinheiro recebido.
    */
   const [opportunities, setOpportunities] =
     useState<Opportunity[]>(
       seedOpportunities,
     )
 
+  /*
+   * TAREFAS
+   *
+   * Mantemos as tarefas iniciais do projeto
+   * para testar a interface.
+   */
   const [tasks, setTasks] =
     useState<Task[]>(seedTasks)
 
+  /*
+   * Histórico de atividades começa vazio.
+   */
   const [activity, setActivity] =
     useState<ActivityEvent[]>([])
 
   /*
-   * Não carregamos transações fictícias.
+   * Histórico financeiro começa vazio.
    *
-   * O histórico financeiro começa vazio.
+   * Nenhum valor fictício entra aqui.
    */
   const [transactions, setTransactions] =
     useState<Transaction[]>([])
@@ -156,6 +178,9 @@ export function AgentProvider({
 
   statusRef.current = status
 
+  /*
+   * REGISTRO DE ATIVIDADE
+   */
   const pushActivity =
     useCallback(
       (
@@ -179,13 +204,22 @@ export function AgentProvider({
     )
 
   /*
-   * Registra um ganho REAL confirmado.
+   * REGISTRO DE PAGAMENTO CONFIRMADO
    *
-   * Esta função é a única responsável por
-   * adicionar dinheiro ao saldo.
+   * ESTA É A ÚNICA FUNÇÃO QUE PODE
+   * ADICIONAR DINHEIRO AO SALDO.
    *
-   * Uma oportunidade encontrada ou uma tarefa
-   * concluída NÃO adiciona dinheiro automaticamente.
+   * Encontrar oportunidade:
+   * NÃO adiciona dinheiro.
+   *
+   * Iniciar tarefa:
+   * NÃO adiciona dinheiro.
+   *
+   * Concluir tarefa:
+   * NÃO adiciona dinheiro.
+   *
+   * Somente pagamento confirmado:
+   * ADICIONA dinheiro.
    */
   const registerConfirmedEarning =
     useCallback(
@@ -233,20 +267,22 @@ export function AgentProvider({
 
         pushActivity({
           kind: 'earning',
-          message: `Pagamento confirmado — ${description}`,
+          message:
+            `Pagamento confirmado — ${description}`,
           amount: earned,
         })
       },
       [pushActivity],
     )
 
+  /*
+   * MOTOR DO AGENTE
+   */
   const tick =
     useCallback(() => {
       /*
-       * O agente só evolui quando está trabalhando.
-       *
-       * Pendências de uma tarefa não param
-       * as outras atividades.
+       * Só para quando o usuário apertar
+       * "Parar atividades".
        */
       if (
         statusRef.current !==
@@ -261,18 +297,15 @@ export function AgentProvider({
       /*
        * AVANÇA TAREFAS
        *
-       * Atenção:
-       * concluir uma tarefa NÃO significa
-       * receber dinheiro.
-       *
-       * O valor continua sendo apenas estimado.
+       * IMPORTANTE:
+       * terminar uma tarefa NÃO gera dinheiro.
        */
       setTasks((prev) => {
         let completed: Task | null =
           null
 
-        const next = prev.map(
-          (task) => {
+        const next =
+          prev.map((task) => {
             if (
               task.state !==
               'running'
@@ -308,8 +341,7 @@ export function AgentProvider({
               ...task,
               progress,
             }
-          },
-        )
+          })
 
         if (completed) {
           const done =
@@ -322,15 +354,8 @@ export function AgentProvider({
           })
 
           /*
-           * NÃO fazemos:
-           *
-           * setToday(...)
-           * setTotal(...)
-           *
-           * porque concluir a tarefa não prova
-           * que houve pagamento.
+           * NÃO adicionamos dinheiro aqui.
            */
-
           return next.filter(
             (task) =>
               task.id !==
@@ -344,12 +369,11 @@ export function AgentProvider({
       /*
        * DESCOBERTA DE OPORTUNIDADES
        *
-       * IMPORTANTE:
-       * Esta lista ainda é uma simulação/local.
-       * Ela NÃO representa sites que garantem pagamento.
+       * Por enquanto esta parte é somente
+       * uma simulação local para testar o motor.
        *
-       * A próxima etapa será substituir este
-       * mecanismo por fontes reais e autorizadas.
+       * Na próxima etapa substituiremos isso
+       * por fontes reais.
        */
       if (roll > 0.55) {
         const template =
@@ -378,7 +402,8 @@ export function AgentProvider({
 
         pushActivity({
           kind: 'discovery',
-          message: `Nova oportunidade encontrada em ${op.source}. Valor estimado: US$ ${op.estimatedValue.toFixed(2)}`,
+          message:
+            `Nova oportunidade encontrada em ${op.source}. Valor estimado: US$ ${op.estimatedValue.toFixed(2)}`,
         })
       }
 
@@ -423,7 +448,8 @@ export function AgentProvider({
 
             pushActivity({
               kind: 'start',
-              message: `Iniciada tarefa — ${candidate.title}`,
+              message:
+                `Iniciada tarefa — ${candidate.title}`,
             })
 
             return prev.map(
@@ -444,12 +470,10 @@ export function AgentProvider({
       /*
        * PENDÊNCIA
        *
-       * O agente não tenta burlar CAPTCHA,
-       * 2FA, confirmação bancária ou identidade.
+       * Uma tarefa pode precisar de
+       * intervenção humana.
        *
-       * Quando uma plataforma exigir
-       * intervenção humana, a tarefa fica
-       * pendente.
+       * Isso NÃO para o restante do agente.
        */
       if (roll > 0.9) {
         setTasks((prev) => {
@@ -466,7 +490,8 @@ export function AgentProvider({
 
           pushActivity({
             kind: 'pending',
-            message: `Tarefa marcada como pendente — ${candidate.source}`,
+            message:
+              `Tarefa marcada como pendente — ${candidate.source}`,
           })
 
           return prev.map(
@@ -479,7 +504,8 @@ export function AgentProvider({
                       'pending',
                     pendingReason:
                       'A plataforma exige uma ação manual (verificação ou confirmação) para prosseguir.',
-                    actionUrl: undefined,
+                    actionUrl:
+                      undefined,
                   }
                 : t,
           )
@@ -488,7 +514,9 @@ export function AgentProvider({
     }, [pushActivity])
 
   /*
-   * MOTOR CONTÍNUO
+   * EXECUÇÃO CONTÍNUA
+   *
+   * O agente verifica o estado a cada 3,5 segundos.
    */
   useEffect(() => {
     const interval =
@@ -504,7 +532,9 @@ export function AgentProvider({
   }, [tick])
 
   /*
-   * PARAR
+   * PARAR ATIVIDADES
+   *
+   * ÚNICA forma normal de pausar o agente.
    */
   const stop =
     useCallback(() => {
@@ -518,7 +548,7 @@ export function AgentProvider({
     }, [pushActivity])
 
   /*
-   * CONTINUAR
+   * CONTINUAR TRABALHANDO
    */
   const resume =
     useCallback(() => {
@@ -565,7 +595,8 @@ export function AgentProvider({
 
         pushActivity({
           kind: 'resolved',
-          message: `Pendência resolvida — ${task?.title ?? 'tarefa'} retomada`,
+          message:
+            `Pendência resolvida — ${task?.title ?? 'tarefa'} retomada`,
         })
       },
       [pushActivity, tasks],
@@ -612,7 +643,8 @@ export function AgentProvider({
 
             pushActivity({
               kind: 'start',
-              message: `Iniciada tarefa — ${op.title}`,
+              message:
+                `Iniciada tarefa — ${op.title}`,
             })
 
             return prev.map(
@@ -656,34 +688,28 @@ export function AgentProvider({
     )
 
   /*
-   * Se não existem tarefas rodando,
-   * o agente fica aguardando.
+   * REGRA PRINCIPAL DO AGENTE
    *
-   * Atingir a meta NÃO altera esse status.
+   * NÃO fazemos mais:
+   *
+   * if (!hasRunning)
+   *   status = waiting
+   *
+   * Porque estar sem tarefas NÃO significa
+   * que o agente parou.
+   *
+   * Se o usuário não apertou PARAR,
+   * o agente continua TRABALHANDO,
+   * procurando novas oportunidades.
    */
-  const hasRunning =
-    tasks.some(
-      (t) =>
-        t.state ===
-        'running',
-    )
-
   useEffect(() => {
     if (
-      status === 'paused'
+      status !== 'paused' &&
+      status !== 'working'
     ) {
-      return
+      setStatus('working')
     }
-
-    setStatus(
-      hasRunning
-        ? 'working'
-        : 'waiting',
-    )
-  }, [
-    hasRunning,
-    status,
-  ])
+  }, [status])
 
   const runningTasks =
     useMemo(
