@@ -49,7 +49,7 @@ export function getOperatorProfile():
   return {
     fullName:
       required(
-        'OPERATOR_FULL_NAME',
+        'OPERATOR_NAME',
       ),
 
     email:
