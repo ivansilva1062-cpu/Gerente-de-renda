@@ -1,638 +1,742 @@
 import { NextResponse } from 'next/server'
-import { createHash } from 'crypto'
-import { sql } from '@/lib/db'
 
-type TavilyResult = {
-  title?: string
+type AnalyzeRequest = {
   url?: string
+  title?: string
+  source?: string
+  category?: string
   content?: string
-  score?: number
 }
 
-type TavilyResponse = {
-  results?: TavilyResult[]
-}
+type Classification =
+  | 'real_opportunity'
+  | 'needs_review'
+  | 'content'
+  | 'invalid'
 
-type AnalyzeResponse = {
-  success?: boolean
-  analysis?: {
-    valid?: boolean
-    classification?:
-      | 'real_opportunity'
-      | 'needs_review'
-      | 'content'
-      | 'invalid'
-    confidence?: number
-    reasons?: string[]
-    signals?: {
-      application?: boolean
-      signup?: boolean
-      payment?: boolean
-      work?: boolean
-      contentPage?: boolean
-    }
+type AnalysisResult = {
+  valid: boolean
+  classification: Classification
+  confidence: number
+  reasons: string[]
+  signals: {
+    application: boolean
+    signup: boolean
+    payment: boolean
+    work: boolean
+    task: boolean
+    contentPage: boolean
+    opportunityPage: boolean
   }
 }
 
-const SEARCHES = [
-  {
-    query:
-      'legitimate paid online opportunities remote work microtasks paid studies testing freelance',
-    category: 'microtasks',
-  },
-  {
-    query:
-      'paid research studies online participants legitimate remote',
-    category: 'surveys',
-  },
-  {
-    query:
-      'get paid to test websites apps remote user testing',
-    category: 'testing',
-  },
-  {
-    query:
-      'freelance jobs online earn money remote services marketplace',
-    category: 'freelance',
-  },
-  {
-    query:
-      'content creator affiliate programs legitimate online income',
-    category: 'content',
-  },
-  {
-    query:
-      'affiliate programs remote online income legitimate',
-    category: 'affiliate',
-  },
+const CONTENT_WORDS = [
+  'blog',
+  'article',
+  'articles',
+  'guide',
+  'guides',
+  'news',
+  'resources',
+  'resource',
+  'explained',
+  'how-to',
+  'howto',
+  'tips',
+  'what-is',
+  'what-are',
+  'ultimate-guide',
+  'learn',
+  'academy',
 ]
 
-const ALLOWED_CATEGORIES = [
-  'microtasks',
+const CONTENT_PHRASES = [
+  'how to',
+  'what is',
+  'what are',
+  'best ways',
+  'ultimate guide',
+  'everything you need to know',
+  'commission structure',
+  'commission structures',
+  'tips and tricks',
+  'learn more about',
+  'best affiliate programs',
+  'top affiliate programs',
+  'affiliate marketing guide',
+  'affiliate marketing tips',
+  'ways to make money',
+  'how to make money',
+]
+
+const APPLICATION_WORDS = [
+  'apply',
+  'apply now',
+  'application',
+  'applications',
+  'register',
+  'registration',
+  'join',
+  'join now',
+  'join us',
+  'sign up',
+  'signup',
+  'create account',
+  'create an account',
+  'become a tester',
+  'become an affiliate',
+  'become a partner',
+  'become a contributor',
+  'become a creator',
+  'start working',
+  'start earning',
+  'get started',
+  'submit application',
+]
+
+const PAYMENT_WORDS = [
+  'get paid',
+  'paid',
+  'payment',
+  'payments',
+  'commission',
+  'commissions',
+  'reward',
+  'rewards',
+  'earn',
+  'earnings',
+  'cash',
+  'payout',
+  'payouts',
+  'income',
+  'money',
+  'dollars',
+  'usd',
+  'per task',
+  'per study',
+  'per test',
+  'per survey',
+  'hourly pay',
+  'hourly rate',
+  'salary',
+  'compensation',
+]
+
+const WORK_WORDS = [
+  'job',
+  'jobs',
+  'work',
+  'worker',
+  'workers',
   'freelance',
+  'freelancer',
+  'task',
+  'tasks',
+  'microtask',
+  'microtasks',
+  'study',
+  'studies',
+  'research',
+  'survey',
   'surveys',
-  'content',
-  'affiliate',
+  'tester',
   'testing',
-] as const
+  'usertesting',
+  'affiliate',
+  'affiliates',
+  'partner',
+  'partners',
+  'creator',
+  'creators',
+  'contractor',
+  'contractors',
+  'gig',
+  'gigs',
+]
 
-type Category =
-  (typeof ALLOWED_CATEGORIES)[number]
+const STRONG_OPPORTUNITY_PHRASES = [
+  'paid survey',
+  'paid surveys',
+  'paid study',
+  'paid studies',
+  'paid research',
+  'paid research study',
+  'paid research studies',
+  'get paid to test',
+  'get paid testing',
+  'paid tester',
+  'paid testers',
+  'website testing',
+  'app testing',
+  'user testing',
+  'remote job',
+  'remote jobs',
+  'freelance job',
+  'freelance jobs',
+  'microtask',
+  'microtasks',
+  'earn commission',
+  'affiliate program',
+  'affiliate programme',
+  'referral program',
+  'referral programme',
+  'creator rewards',
+  'creator revenue',
+  'revenue sharing',
+  'paid content creator',
+  'content creator program',
+]
 
-async function ensureTable() {
-  await sql`
-    CREATE TABLE IF NOT EXISTS opportunities (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      source TEXT NOT NULL,
-      category TEXT NOT NULL,
-      estimated_value NUMERIC(12,2) NOT NULL DEFAULT 0,
-      confidence INTEGER NOT NULL DEFAULT 0,
-      status TEXT NOT NULL DEFAULT 'new',
-      url TEXT,
-      requires_signup BOOLEAN NOT NULL DEFAULT TRUE,
-      requires_user_action BOOLEAN NOT NULL DEFAULT TRUE,
-      language TEXT NOT NULL DEFAULT 'global',
-      automated_preparation BOOLEAN NOT NULL DEFAULT FALSE,
-      discovered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `
+const ACTION_PHRASES = [
+  'apply now',
+  'sign up',
+  'signup',
+  'register now',
+  'join now',
+  'join us',
+  'become an affiliate',
+  'become a partner',
+  'become a tester',
+  'become a creator',
+  'start earning',
+  'get paid',
+  'get started',
+  'apply for',
+  'create an account',
+  'create account',
+]
 
-  await sql`
-    ALTER TABLE opportunities
-    ADD COLUMN IF NOT EXISTS language TEXT
-    NOT NULL DEFAULT 'global'
-  `
-
-  await sql`
-    ALTER TABLE opportunities
-    ADD COLUMN IF NOT EXISTS automated_preparation BOOLEAN
-    NOT NULL DEFAULT FALSE
-  `
-}
-
-function makeId(url: string) {
-  return `tavily-${createHash('sha256')
-    .update(url)
-    .digest('hex')
-    .slice(0, 24)}`
-}
-
-function cleanText(value: string) {
+function normalize(value: string) {
   return value
+    .toLowerCase()
+    .replace(/https?:\/\//g, ' ')
+    .replace(/www\./g, ' ')
+    .replace(/[^a-z0-9$%./ -]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 }
 
-function getSource(url: string) {
-  try {
-    return new URL(url).hostname
-      .replace(/^www\./, '')
-  } catch {
-    return 'Web'
-  }
+function containsAny(
+  text: string,
+  words: string[],
+) {
+  return words.some((word) =>
+    text.includes(normalize(word)),
+  )
 }
 
-function calculateConfidence(score = 0) {
-  const value = Math.round(
-    70 + Math.min(Math.max(score, 0), 1) * 25,
+function countMatches(
+  text: string,
+  words: string[],
+) {
+  return words.filter((word) =>
+    text.includes(normalize(word)),
+  ).length
+}
+
+function isContentPage(
+  url: string,
+  title: string,
+) {
+  const normalizedUrl = normalize(url)
+  const normalizedTitle = normalize(title)
+
+  const urlContent =
+    containsAny(
+      normalizedUrl,
+      CONTENT_WORDS,
+    )
+
+  const titleContent =
+    containsAny(
+      normalizedTitle,
+      CONTENT_PHRASES,
+    )
+
+  return urlContent || titleContent
+}
+
+function analyzeText(
+  url: string,
+  title: string,
+  content: string,
+): AnalysisResult {
+  const normalizedUrl = normalize(url)
+  const normalizedTitle = normalize(title)
+
+  const text = normalize(
+    `${title} ${content}`,
   )
 
-  return Math.min(value, 95)
-}
+  const contentPage = isContentPage(
+    url,
+    title,
+  )
 
-/*
- * Analisa a oportunidade antes de salvar.
- *
- * O radar chama a API de análise existente.
- */
-async function analyzeOpportunity(
-  request: Request,
-  result: TavilyResult,
-  category: Category,
-) {
-  if (!result.url) {
+  const application =
+    containsAny(
+      text,
+      APPLICATION_WORDS,
+    )
+
+  const signup =
+    containsAny(
+      text,
+      [
+        'sign up',
+        'signup',
+        'register',
+        'registration',
+        'create account',
+        'create an account',
+      ],
+    )
+
+  const payment =
+    containsAny(
+      text,
+      PAYMENT_WORDS,
+    )
+
+  const work =
+    containsAny(
+      text,
+      WORK_WORDS,
+    )
+
+  const task =
+    containsAny(
+      text,
+      [
+        'task',
+        'tasks',
+        'microtask',
+        'microtasks',
+        'study',
+        'research',
+        'survey',
+        'surveys',
+        'testing',
+        'tester',
+        'job',
+        'jobs',
+        'freelance',
+      ],
+    )
+
+  const strongOpportunity =
+    containsAny(
+      text,
+      STRONG_OPPORTUNITY_PHRASES,
+    )
+
+  const explicitAction =
+    containsAny(
+      text,
+      ACTION_PHRASES,
+    )
+
+  const opportunityPage =
+    strongOpportunity ||
+    (
+      explicitAction &&
+      (
+        application ||
+        signup
+      ) &&
+      (
+        payment ||
+        work ||
+        task
+      )
+    )
+
+  const reasons: string[] = []
+
+  if (application) {
+    reasons.push(
+      'Encontrado sinal de candidatura, inscrição ou participação.',
+    )
+  }
+
+  if (signup) {
+    reasons.push(
+      'Encontrado sinal de cadastro.',
+    )
+  }
+
+  if (payment) {
+    reasons.push(
+      'Encontrados sinais explícitos de pagamento, recompensa ou remuneração.',
+    )
+  }
+
+  if (work) {
+    reasons.push(
+      'Encontrados sinais de trabalho, serviço ou atividade remunerada.',
+    )
+  }
+
+  if (task) {
+    reasons.push(
+      'Encontrados sinais de tarefa, estudo, teste, pesquisa ou trabalho.',
+    )
+  }
+
+  if (strongOpportunity) {
+    reasons.push(
+      'Encontrada expressão diretamente relacionada a uma oportunidade de renda.',
+    )
+  }
+
+  if (contentPage) {
+    reasons.push(
+      'A página parece ser conteúdo informativo, artigo, guia ou lista.',
+    )
+  }
+
+  /*
+   * 1. CONTEÚDO PURO
+   *
+   * Artigos, guias e listas não devem
+   * aparecer como oportunidade.
+   */
+  if (
+    contentPage &&
+    !opportunityPage &&
+    !strongOpportunity
+  ) {
     return {
       valid: false,
-      classification: 'invalid',
-      confidence: 0,
+      classification: 'content',
+      confidence: 96,
+      reasons: [
+        ...reasons,
+        'A página não apresentou uma ação clara para participar ou ganhar dinheiro.',
+      ],
+      signals: {
+        application,
+        signup,
+        payment,
+        work,
+        task,
+        contentPage,
+        opportunityPage,
+      },
     }
   }
 
-  try {
-    const analyzeUrl = new URL(
-      '/api/opportunities/analyze',
-      request.url,
+  /*
+   * 2. OPORTUNIDADE REAL
+   *
+   * Precisa existir uma combinação
+   * concreta de ação + renda/atividade.
+   */
+  if (
+    opportunityPage &&
+    (
+      payment ||
+      work ||
+      task
+    )
+  ) {
+    return {
+      valid: true,
+      classification: 'real_opportunity',
+      confidence: 93,
+      reasons: [
+        ...reasons,
+        'A página apresenta sinais suficientes de uma oportunidade acionável.',
+      ],
+      signals: {
+        application,
+        signup,
+        payment,
+        work,
+        task,
+        contentPage,
+        opportunityPage,
+      },
+    }
+  }
+
+  /*
+   * 3. OPORTUNIDADE FORTE POR FRASE
+   *
+   * Algumas páginas oficiais não usam
+   * "apply" no texto inicial, mas o próprio
+   * título deixa claro que existe atividade paga.
+   */
+  if (
+    strongOpportunity &&
+    (
+      payment ||
+      work ||
+      task
+    ) &&
+    !(
+      contentPage &&
+      !explicitAction
+    )
+  ) {
+    return {
+      valid: true,
+      classification: 'real_opportunity',
+      confidence: 88,
+      reasons: [
+        ...reasons,
+        'O título ou conteúdo indica uma atividade remunerada concreta.',
+      ],
+      signals: {
+        application,
+        signup,
+        payment,
+        work,
+        task,
+        contentPage,
+        opportunityPage,
+      },
+    }
+  }
+
+  /*
+   * 4. REVISÃO
+   *
+   * Só usamos revisão quando existem
+   * sinais relevantes, mas não suficientes.
+   */
+  const paymentMatches =
+    countMatches(
+      text,
+      PAYMENT_WORDS,
     )
 
-    const response = await fetch(
-      analyzeUrl.toString(),
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type':
-            'application/json',
-        },
-        body: JSON.stringify({
-          url: result.url,
-          title: result.title ?? '',
-          source: getSource(result.url),
-          category,
-          content:
-            result.content ?? '',
-        }),
-        cache: 'no-store',
-      },
+  const workMatches =
+    countMatches(
+      text,
+      WORK_WORDS,
     )
+
+  if (
+    (
+      paymentMatches >= 2 ||
+      workMatches >= 2
+    ) &&
+    !contentPage
+  ) {
+    return {
+      valid: true,
+      classification: 'needs_review',
+      confidence: 65,
+      reasons: [
+        ...reasons,
+        'Existem sinais de possível oportunidade, mas é necessária verificação adicional.',
+      ],
+      signals: {
+        application,
+        signup,
+        payment,
+        work,
+        task,
+        contentPage,
+        opportunityPage,
+      },
+    }
+  }
+
+  /*
+   * 5. INVÁLIDA
+   */
+  return {
+    valid: false,
+    classification: 'invalid',
+    confidence: 30,
+    reasons: [
+      ...reasons,
+      'Não foram encontrados sinais suficientes de uma oportunidade real e acionável.',
+    ],
+    signals: {
+      application,
+      signup,
+      payment,
+      work,
+      task,
+      contentPage,
+      opportunityPage,
+    },
+  }
+}
+
+async function inspectPage(
+  url: string,
+) {
+  try {
+    const response =
+      await fetch(url, {
+        method: 'GET',
+        redirect: 'follow',
+        cache: 'no-store',
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 Gerente-de-Renda Opportunity Analyzer',
+        },
+      })
 
     if (!response.ok) {
-      return {
-        valid: false,
-        classification: 'invalid',
-        confidence: 0,
-      }
+      return ''
     }
 
-    const data =
-      (await response.json()) as AnalyzeResponse
+    const contentType =
+      response.headers.get(
+        'content-type',
+      ) ?? ''
 
-    const analysis =
-      data.analysis
-
-    if (!analysis) {
-      return {
-        valid: false,
-        classification: 'invalid',
-        confidence: 0,
-      }
+    if (
+      !contentType.includes(
+        'text/html',
+      )
+    ) {
+      return ''
     }
 
-    return {
-      valid:
-        analysis.valid === true,
-      classification:
-        analysis.classification ??
-        'invalid',
-      confidence:
-        Number(
-          analysis.confidence ?? 0,
-        ),
-    }
-  } catch (error) {
-    console.error(
-      'Erro ao analisar oportunidade:',
-      error,
-    )
-
-    return {
-      valid: false,
-      classification: 'invalid',
-      confidence: 0,
-    }
-  }
-}
-
-async function searchTavily(
-  query: string,
-) {
-  const apiKey =
-    process.env.TAVILY_API_KEY
-
-  if (!apiKey) {
-    throw new Error(
-      'TAVILY_API_KEY não configurada no ambiente.',
-    )
-  }
-
-  const response = await fetch(
-    'https://api.tavily.com/search',
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type':
-          'application/json',
-      },
-      body: JSON.stringify({
-        api_key: apiKey,
-        query,
-        search_depth: 'advanced',
-        topic: 'general',
-        max_results: 8,
-        include_answer: false,
-        include_raw_content: false,
-      }),
-      cache: 'no-store',
-    },
-  )
-
-  if (!response.ok) {
-    const text =
+    const html =
       await response.text()
 
-    throw new Error(
-      `Tavily respondeu ${response.status}: ${text}`,
-    )
-  }
+    const text =
+      html
+        .replace(
+          /<script[\s\S]*?<\/script>/gi,
+          ' ',
+        )
+        .replace(
+          /<style[\s\S]*?<\/style>/gi,
+          ' ',
+        )
+        .replace(
+          /<noscript[\s\S]*?<\/noscript>/gi,
+          ' ',
+        )
+        .replace(
+          /<[^>]+>/g,
+          ' ',
+        )
+        .replace(
+          /&nbsp;/gi,
+          ' ',
+        )
+        .replace(
+          /&amp;/gi,
+          '&',
+        )
+        .replace(
+          /\s+/g,
+          ' ',
+        )
+        .trim()
 
-  return (await response.json()) as TavilyResponse
-}
-
-async function saveOpportunity(
-  result: TavilyResult,
-  category: Category,
-  confidence: number,
-) {
-  if (!result.url || !result.title) {
-    return false
-  }
-
-  const url = result.url.trim()
-
-  if (!url.startsWith('http')) {
-    return false
-  }
-
-  const id = makeId(url)
-
-  const title =
-    cleanText(result.title)
-
-  const source =
-    getSource(url)
-
-  await sql`
-    INSERT INTO opportunities (
-      id,
-      title,
-      source,
-      category,
-      estimated_value,
-      confidence,
-      status,
-      url,
-      requires_signup,
-      requires_user_action,
-      language,
-      automated_preparation,
-      discovered_at
-    )
-    VALUES (
-      ${id},
-      ${title},
-      ${source},
-      ${category},
+    return text.slice(
       0,
-      ${confidence},
-      'new',
-      ${url},
-      TRUE,
-      TRUE,
-      'global',
-      TRUE,
-      NOW()
+      30000,
     )
-
-    ON CONFLICT (id)
-    DO UPDATE SET
-      title =
-        EXCLUDED.title,
-      source =
-        EXCLUDED.source,
-      category =
-        EXCLUDED.category,
-      confidence =
-        EXCLUDED.confidence,
-      url =
-        EXCLUDED.url,
-      discovered_at =
-        NOW()
-  `
-
-  return true
+  } catch {
+    return ''
+  }
 }
 
-export async function GET(
+export async function POST(
   request: Request,
 ) {
   try {
-    await ensureTable()
+    const body =
+      (await request.json()) as AnalyzeRequest
 
-    let discovered = 0
-    let searches = 0
-    let analyzed = 0
-    let rejected = 0
-    let needsReview = 0
+    const url =
+      body.url?.trim()
 
-    const errors: string[] = []
+    const title =
+      body.title?.trim() ?? ''
 
-    /*
-     * RADAR GLOBAL
-     */
-    for (const search of SEARCHES) {
-      try {
-        const data =
-          await searchTavily(
-            search.query,
-          )
-
-        searches += 1
-
-        const results =
-          Array.isArray(
-            data.results,
-          )
-            ? data.results
-            : []
-
-        for (const result of results) {
-          if (
-            !result.url ||
-            !result.title
-          ) {
-            rejected += 1
-            continue
-          }
-
-          /*
-           * PRIMEIRO:
-           * verifica a oportunidade.
-           */
-          const analysis =
-            await analyzeOpportunity(
-              request,
-              result,
-              search.category as Category,
-            )
-
-          analyzed += 1
-
-          /*
-           * CONTEÚDO PURO:
-           * não entra no catálogo.
-           */
-          if (
-            analysis.classification ===
-              'content' ||
-            analysis.classification ===
-              'invalid'
-          ) {
-            rejected += 1
-            continue
-          }
-
-          /*
-           * POSSÍVEL OPORTUNIDADE:
-           * entra, mas com confiança menor.
-           */
-          if (
-            analysis.classification ===
-            'needs_review'
-          ) {
-            needsReview += 1
-          }
-
-          /*
-           * OPORTUNIDADE REAL:
-           * salva.
-           */
-          const baseConfidence =
-            calculateConfidence(
-              Number(
-                result.score ?? 0,
-              ),
-            )
-
-          const finalConfidence =
-            Math.min(
-              baseConfidence,
-              Number(
-                analysis.confidence ??
-                  baseConfidence,
-              ),
-            )
-
-          const saved =
-            await saveOpportunity(
-              result,
-              search.category as Category,
-              finalConfidence,
-            )
-
-          if (saved) {
-            discovered += 1
-          }
-        }
-      } catch (error) {
-        console.error(
-          'Erro em pesquisa Tavily:',
-          error,
-        )
-
-        errors.push(
-          String(error),
-        )
-      }
+    if (!url) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'URL da oportunidade não informada.',
+        },
+        {
+          status: 400,
+        },
+      )
     }
 
+    try {
+      new URL(url)
+    } catch {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'URL inválida.',
+        },
+        {
+          status: 400,
+        },
+      )
+    }
+
+    let pageContent =
+      body.content?.trim() ?? ''
+
     /*
-     * CATÁLOGO ATUAL
+     * Se o radar não trouxe conteúdo suficiente,
+     * abre a página oficial para análise.
      */
-    const rows = await sql`
-      SELECT
-        id,
-        title,
-        source,
-        category,
-        estimated_value,
-        confidence,
-        status,
+    if (
+      pageContent.length < 100
+    ) {
+      pageContent =
+        await inspectPage(
+          url,
+        )
+    }
+
+    const result =
+      analyzeText(
         url,
-        requires_signup,
-        requires_user_action,
-        language,
-        automated_preparation,
-        discovered_at,
-        created_at
-      FROM opportunities
-      ORDER BY
-        discovered_at DESC
-      LIMIT 100
-    `
-
-    const opportunities =
-      rows.map((row) => ({
-        id: row.id,
-        title: row.title,
-        source: row.source,
-        category: row.category,
-
-        /*
-         * IMPORTANTE:
-         * estimativa NÃO é dinheiro.
-         */
-        estimatedValue:
-          Number(
-            row.estimated_value ?? 0,
-          ),
-
-        confidence:
-          Number(
-            row.confidence ?? 0,
-          ),
-
-        status:
-          row.status,
-
-        url:
-          row.url ?? null,
-
-        requiresSignup:
-          Boolean(
-            row.requires_signup,
-          ),
-
-        requiresUserAction:
-          Boolean(
-            row.requires_user_action,
-          ),
-
-        language:
-          row.language ??
-          'global',
-
-        automatedPreparation:
-          Boolean(
-            row.automated_preparation,
-          ),
-
-        discoveredAt:
-          row.discovered_at,
-
-        createdAt:
-          row.created_at,
-      }))
+        title,
+        pageContent,
+      )
 
     return NextResponse.json({
       success: true,
 
-      worker: {
-        active: true,
-        continuous: true,
-
-        /*
-         * A META NUNCA PARA O AGENTE.
-         */
-        goalsStopAgent: false,
-
-        /*
-         * SOMENTE PARADA MANUAL.
-         */
-        onlyManualStop: true,
+      opportunity: {
+        url,
+        title,
+        source:
+          body.source ??
+          null,
+        category:
+          body.category ??
+          null,
       },
 
-      radar: {
-        active: true,
-        engine: 'Tavily',
-
-        searches,
-
-        analyzed,
-
-        discovered,
-
-        rejected,
-
-        needsReview,
-
-        categories:
-          ALLOWED_CATEGORIES,
-
-        continuous: true,
-
-        goalsStopAgent: false,
-
-        onlyManualStop: true,
-
-        estimatedValuesAreNotMoney:
-          true,
-
-        confirmedEarningsOnly:
-          true,
-
-        identityActionsRequireUser:
-          true,
-      },
-
-      total:
-        opportunities.length,
-
-      opportunities,
-
-      message:
-        'Radar executado. Oportunidades passaram pelo analisador antes de serem catalogadas.',
-
-      errors:
-        errors.length > 0
-          ? errors
-          : undefined,
+      analysis:
+        result,
     })
   } catch (error) {
     console.error(
-      'Erro no radar Tavily:',
+      'Erro no analisador de oportunidades:',
       error,
     )
 
     return NextResponse.json(
       {
         success: false,
-
         error:
           error instanceof Error
             ? error.message
-            : 'Erro ao executar radar',
-
-        opportunities: [],
+            : 'Erro ao analisar oportunidade.',
       },
       {
         status: 500,
