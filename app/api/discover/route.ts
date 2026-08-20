@@ -1,118 +1,62 @@
 import { NextResponse } from 'next/server'
+import { createHash } from 'crypto'
 import { sql } from '@/lib/db'
 
-/*
- * RADAR GLOBAL DE OPORTUNIDADES
- *
- * O radar mantém fontes legítimas de renda
- * e prepara o sistema para receber novas
- * oportunidades posteriormente.
- *
- * REGRAS:
- * - oportunidade não é dinheiro;
- * - estimativa não altera saldo;
- * - não usa senha, CPF, cartão ou 2FA;
- * - não responde testes/pesquisas em nome do usuário;
- * - não finge identidade;
- * - ganhos reais continuam exclusivamente em /api/earnings;
- * - o agente pode continuar pesquisando enquanto estiver ativo.
- */
-
-type RadarSource = {
-  id: string
-  title: string
-  source: string
-  category:
-    | 'microtasks'
-    | 'freelance'
-    | 'surveys'
-    | 'content'
-    | 'affiliate'
-    | 'testing'
-  confidence: number
-  url: string
-  language: 'pt' | 'en' | 'global'
-  requiresSignup: boolean
-  requiresUserAction: boolean
-  automatedPreparation: boolean
+type TavilyResult = {
+  title?: string
+  url?: string
+  content?: string
+  score?: number
 }
 
-/*
- * CATÁLOGO INICIAL
- *
- * Estas são fontes conhecidas.
- *
- * O próximo estágio poderá adicionar
- * novas fontes vindas de APIs de busca.
- */
-const SOURCES: RadarSource[] = [
-  {
-    id: 'source-prolific',
-    title: 'Prolific — estudos pagos',
-    source: 'Prolific',
-    category: 'surveys',
-    confidence: 95,
-    url:
-      'https://www.prolific.com/participants-join-us',
-    language: 'global',
-    requiresSignup: true,
-    requiresUserAction: true,
-    automatedPreparation: true,
-  },
+type TavilyResponse = {
+  results?: TavilyResult[]
+}
 
+const SEARCHES = [
   {
-    id: 'source-usertesting',
-    title:
-      'UserTesting — testes de sites e aplicativos',
-    source: 'UserTesting',
-    category: 'testing',
-    confidence: 95,
-    url:
-      'https://www.usertesting.com/get-paid-to-test',
-    language: 'global',
-    requiresSignup: true,
-    requiresUserAction: true,
-    automatedPreparation: true,
-  },
-
-  {
-    id: 'source-clickworker',
-    title:
-      'Clickworker — microtarefas',
-    source: 'Clickworker',
+    query:
+      'legitimate paid online opportunities remote work microtasks paid studies testing freelance',
     category: 'microtasks',
-    confidence: 90,
-    url:
-      'https://www.clickworker.com/clickworker/',
-    language: 'global',
-    requiresSignup: true,
-    requiresUserAction: true,
-    automatedPreparation: true,
   },
-
   {
-    id: 'source-fiverr',
-    title:
-      'Fiverr — vender serviços',
-    source: 'Fiverr',
-    category: 'freelance',
-    confidence: 90,
-    url:
-      'https://www.fiverr.com/',
-    language: 'global',
-    requiresSignup: true,
-    requiresUserAction: true,
-    automatedPreparation: true,
+    query:
+      'paid research studies online participants legitimate remote',
+    category: 'surveys',
   },
-
-  /*
-   * CATEGORIAS PARA O RADAR FUTURO
-   *
-   * Não inventamos uma oportunidade específica.
-   * São apenas categorias que o radar poderá
-   * pesquisar quando conectarmos uma fonte de busca.
-   */
+  {
+    query:
+      'get paid to test websites apps remote user testing',
+    category: 'testing',
+  },
+  {
+    query:
+      'freelance jobs online earn money remote services marketplace',
+    category: 'freelance',
+  },
+  {
+    query:
+      'content creator affiliate programs legitimate online income',
+    category: 'content',
+  },
+  {
+    query:
+      'affiliate programs remote online income legitimate',
+    category: 'affiliate',
+  },
 ]
+
+const ALLOWED_CATEGORIES = [
+  'microtasks',
+  'freelance',
+  'surveys',
+  'content',
+  'affiliate',
+  'testing',
+] as const
+
+type Category =
+  (typeof ALLOWED_CATEGORIES)[number]
 
 async function ensureTable() {
   await sql`
@@ -134,9 +78,6 @@ async function ensureTable() {
     )
   `
 
-  /*
-   * Compatibilidade com a tabela antiga.
-   */
   await sql`
     ALTER TABLE opportunities
     ADD COLUMN IF NOT EXISTS language TEXT
@@ -150,89 +91,219 @@ async function ensureTable() {
   `
 }
 
-/*
- * Registra ou atualiza fontes conhecidas.
- */
-async function registerSources() {
-  let discovered = 0
-
-  for (const source of SOURCES) {
-    const result = await sql`
-      INSERT INTO opportunities (
-        id,
-        title,
-        source,
-        category,
-        estimated_value,
-        confidence,
-        status,
-        url,
-        requires_signup,
-        requires_user_action,
-        language,
-        automated_preparation,
-        discovered_at
-      )
-      VALUES (
-        ${source.id},
-        ${source.title},
-        ${source.source},
-        ${source.category},
-        0,
-        ${source.confidence},
-        'new',
-        ${source.url},
-        ${source.requiresSignup},
-        ${source.requiresUserAction},
-        ${source.language},
-        ${source.automatedPreparation},
-        NOW()
-      )
-
-      ON CONFLICT (id)
-      DO UPDATE SET
-        title =
-          EXCLUDED.title,
-        source =
-          EXCLUDED.source,
-        category =
-          EXCLUDED.category,
-        confidence =
-          EXCLUDED.confidence,
-        url =
-          EXCLUDED.url,
-        requires_signup =
-          EXCLUDED.requires_signup,
-        requires_user_action =
-          EXCLUDED.requires_user_action,
-        language =
-          EXCLUDED.language,
-        automated_preparation =
-          EXCLUDED.automated_preparation
-
-      RETURNING id
-    `
-
-    if (result.length > 0) {
-      discovered += 1
-    }
-  }
-
-  return discovered
+function makeId(url: string) {
+  return `tavily-${createHash('sha256')
+    .update(url)
+    .digest('hex')
+    .slice(0, 24)}`
 }
 
-/*
- * GET
- *
- * Executa uma varredura do catálogo.
- */
+function cleanText(value: string) {
+  return value
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function getSource(url: string) {
+  try {
+    return new URL(url).hostname
+      .replace(/^www\./, '')
+  } catch {
+    return 'Web'
+  }
+}
+
+function calculateConfidence(score = 0) {
+  const value = Math.round(
+    70 + Math.min(Math.max(score, 0), 1) * 25,
+  )
+
+  return Math.min(value, 95)
+}
+
+async function searchTavily(
+  query: string,
+) {
+  const apiKey =
+    process.env.TAVILY_API_KEY
+
+  if (!apiKey) {
+    throw new Error(
+      'TAVILY_API_KEY não configurada no ambiente.',
+    )
+  }
+
+  const response = await fetch(
+    'https://api.tavily.com/search',
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type':
+          'application/json',
+      },
+      body: JSON.stringify({
+        api_key: apiKey,
+        query,
+        search_depth: 'advanced',
+        topic: 'general',
+        max_results: 8,
+        include_answer: false,
+        include_raw_content: false,
+      }),
+      cache: 'no-store',
+    },
+  )
+
+  if (!response.ok) {
+    const text =
+      await response.text()
+
+    throw new Error(
+      `Tavily respondeu ${response.status}: ${text}`,
+    )
+  }
+
+  return (await response.json()) as TavilyResponse
+}
+
+async function saveOpportunity(
+  result: TavilyResult,
+  category: Category,
+) {
+  if (!result.url || !result.title) {
+    return false
+  }
+
+  const url = result.url.trim()
+
+  if (!url.startsWith('http')) {
+    return false
+  }
+
+  const id = makeId(url)
+
+  const title =
+    cleanText(result.title)
+
+  const content =
+    cleanText(
+      result.content ?? '',
+    )
+
+  const source =
+    getSource(url)
+
+  const confidence =
+    calculateConfidence(
+      Number(result.score ?? 0),
+    )
+
+  await sql`
+    INSERT INTO opportunities (
+      id,
+      title,
+      source,
+      category,
+      estimated_value,
+      confidence,
+      status,
+      url,
+      requires_signup,
+      requires_user_action,
+      language,
+      automated_preparation,
+      discovered_at
+    )
+    VALUES (
+      ${id},
+      ${title},
+      ${source},
+      ${category},
+      0,
+      ${confidence},
+      'new',
+      ${url},
+      TRUE,
+      TRUE,
+      'global',
+      TRUE,
+      NOW()
+    )
+
+    ON CONFLICT (id)
+    DO UPDATE SET
+      title =
+        EXCLUDED.title,
+      source =
+        EXCLUDED.source,
+      category =
+        EXCLUDED.category,
+      confidence =
+        EXCLUDED.confidence,
+      url =
+        EXCLUDED.url,
+      discovered_at =
+        NOW()
+  `
+
+  return true
+}
+
 export async function GET() {
   try {
     await ensureTable()
 
-    const discovered =
-      await registerSources()
+    let discovered = 0
+    let searches = 0
+    const errors: string[] = []
 
+    /*
+     * PESQUISA GLOBAL
+     *
+     * O agente consulta várias categorias.
+     */
+    for (const search of SEARCHES) {
+      try {
+        const data =
+          await searchTavily(
+            search.query,
+          )
+
+        searches += 1
+
+        const results =
+          Array.isArray(
+            data.results,
+          )
+            ? data.results
+            : []
+
+        for (const result of results) {
+          const saved =
+            await saveOpportunity(
+              result,
+              search.category as Category,
+            )
+
+          if (saved) {
+            discovered += 1
+          }
+        }
+      } catch (error) {
+        console.error(
+          'Erro em pesquisa Tavily:',
+          error,
+        )
+
+        errors.push(
+          String(error),
+        )
+      }
+    }
+
+    /*
+     * DEVOLVE O CATÁLOGO ATUAL.
+     */
     const rows = await sql`
       SELECT
         id,
@@ -251,72 +322,44 @@ export async function GET() {
         created_at
       FROM opportunities
       ORDER BY
-        confidence DESC,
         discovered_at DESC
       LIMIT 100
     `
 
     const opportunities =
       rows.map((row) => ({
-        id:
-          row.id,
-
-        title:
-          row.title,
-
-        source:
-          row.source,
-
-        category:
-          row.category,
-
-        /*
-         * IMPORTANTE:
-         *
-         * Zero não significa que a fonte
-         * não paga.
-         *
-         * Significa somente que ainda
-         * não temos um valor de ganho
-         * confirmado para esta oportunidade.
-         */
+        id: row.id,
+        title: row.title,
+        source: row.source,
+        category: row.category,
         estimatedValue:
           Number(
             row.estimated_value ?? 0,
           ),
-
         confidence:
           Number(
             row.confidence ?? 0,
           ),
-
-        status:
-          row.status,
-
+        status: row.status,
         url:
           row.url ?? null,
-
         requiresSignup:
           Boolean(
             row.requires_signup,
           ),
-
         requiresUserAction:
           Boolean(
             row.requires_user_action,
           ),
-
         language:
-          row.language ?? 'global',
-
+          row.language ??
+          'global',
         automatedPreparation:
           Boolean(
             row.automated_preparation,
           ),
-
         discoveredAt:
           row.discovered_at,
-
         createdAt:
           row.created_at,
       }))
@@ -324,72 +367,48 @@ export async function GET() {
     return NextResponse.json({
       success: true,
 
-      /*
-       * Fontes verificadas nesta rodada.
-       */
-      discovered,
-
-      checked:
-        SOURCES.length,
-
-      total:
-        opportunities.length,
-
-      opportunities,
-
       radar: {
         active: true,
-
-        languages: [
-          'pt',
-          'en',
-          'global',
-        ],
-
-        categories: [
-          'microtasks',
-          'freelance',
-          'surveys',
-          'content',
-          'affiliate',
-          'testing',
-        ],
-
-        continuous:
-          true,
-
-        goalsStopAgent:
-          false,
-
-        onlyManualStop:
-          true,
-
+        engine: 'Tavily',
+        searches,
+        categories:
+          ALLOWED_CATEGORIES,
+        continuous: true,
+        goalsStopAgent: false,
+        onlyManualStop: true,
         estimatedValuesAreNotMoney:
           true,
-
         confirmedEarningsOnly:
           true,
-
         identityActionsRequireUser:
           true,
       },
 
-      nextStage:
-        'Conectar uma fonte legítima de pesquisa para descobrir novas oportunidades além do catálogo inicial.',
+      discovered,
+      total:
+        opportunities.length,
+      opportunities,
+
+      message:
+        'Radar Tavily executado. Novas oportunidades legítimas encontradas e catalogadas.',
+      errors:
+        errors.length > 0
+          ? errors
+          : undefined,
     })
   } catch (error) {
     console.error(
-      'Erro no radar global:',
+      'Erro no radar Tavily:',
       error,
     )
 
     return NextResponse.json(
       {
         success: false,
-
         error:
-          'Erro ao atualizar radar global',
-
+          error instanceof Error
+            ? error.message
+            : 'Erro ao executar radar',
         opportunities: [],
       },
       {
