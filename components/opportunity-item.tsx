@@ -5,6 +5,7 @@ import {
   Check,
   Loader2,
   ExternalLink,
+  UserRound,
 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
@@ -28,20 +29,27 @@ export function OpportunityItem({
     o.status === 'queued'
 
   function handleStart() {
+    if (!startable) {
+      return
+    }
+
     /*
-     * Primeiro registra SOMENTE esta oportunidade
-     * como iniciada.
+     * IMPORTANTE:
      *
-     * Isso NÃO representa dinheiro recebido.
+     * Iniciar uma oportunidade NÃO significa
+     * que recebemos dinheiro.
+     *
+     * Apenas cria a tarefa e inicia o fluxo.
      */
     startOpportunity(o.id)
 
     /*
-     * Depois encaminha o usuário para
-     * a página oficial da oportunidade.
+     * Abre somente a página oficial
+     * encontrada pelo radar.
      *
-     * Não enviamos senha, Pix, cartão,
-     * CPF ou código de autenticação.
+     * Nenhuma senha, Pix, cartão, CPF
+     * ou código de autenticação é enviado
+     * automaticamente daqui.
      */
     if (o.url) {
       window.open(
@@ -54,8 +62,12 @@ export function OpportunityItem({
 
   return (
     <div className="flex items-center gap-4 rounded-lg border border-border bg-card p-4">
+
+      {/* INFORMAÇÕES */}
       <div className="min-w-0 flex-1 space-y-1.5">
+
         <div className="flex flex-wrap items-center gap-2">
+
           <p className="truncate font-medium">
             {o.title}
           </p>
@@ -63,10 +75,21 @@ export function OpportunityItem({
           <Badge variant="neutral">
             {categoryLabel[o.category]}
           </Badge>
+
+          {o.requiresSignup && (
+            <Badge variant="outline">
+              <UserRound className="mr-1 size-3" />
+              Cadastro
+            </Badge>
+          )}
+
         </div>
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          <span>{o.source}</span>
+
+          <span>
+            {o.source}
+          </span>
 
           <span className="text-border">
             •
@@ -85,29 +108,43 @@ export function OpportunityItem({
               o.discoveredAt,
             )}
           </span>
+
         </div>
+
       </div>
 
+      {/* VALOR + AÇÃO */}
       <div className="flex flex-col items-end gap-2">
+
         <span className="font-mono text-sm font-semibold tabular-nums text-success">
           {usd(o.estimatedValue)}
         </span>
 
-        {o.status === 'running' ? (
+        {/* EM EXECUÇÃO */}
+        {o.status === 'running' && (
           <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
             <Loader2 className="size-3 animate-spin" />
             Em execução
           </span>
-        ) : o.status === 'done' ? (
+        )}
+
+        {/* CONCLUÍDA */}
+        {o.status === 'done' && (
           <span className="inline-flex items-center gap-1 text-xs text-success">
             <Check className="size-3" />
             Concluída
           </span>
-        ) : o.status === 'pending' ? (
+        )}
+
+        {/* PENDENTE */}
+        {o.status === 'pending' && (
           <Badge variant="warning">
             Pendente
           </Badge>
-        ) : (
+        )}
+
+        {/* NOVA / NA FILA */}
+        {startable && (
           <Button
             size="sm"
             variant="outline"
@@ -118,7 +155,9 @@ export function OpportunityItem({
             Iniciar
           </Button>
         )}
+
       </div>
+
     </div>
   )
 }
