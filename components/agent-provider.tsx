@@ -36,20 +36,28 @@ interface AgentContextValue {
   integrations: Integration[]
   runningTasks: Task[]
   pendingTasks: Task[]
+
   stop: () => void
   resume: () => void
-  resolvePending: (taskId: string) => void
+
+  resolvePending: (
+    taskId: string,
+  ) => void
+
   startOpportunity: (
     opportunityId: string,
   ) => void
+
   toggleIntegration: (
     key: string,
   ) => void
+
   registerConfirmedEarning: (
     amount: number,
     description: string,
     source: string,
   ) => Promise<void>
+
   refreshOpportunities: () => Promise<void>
 }
 
@@ -99,8 +107,9 @@ type DiscoveryResponse = {
  * 7. Somente /api/earnings confirma dinheiro.
  * 8. Pendência de uma tarefa não para as demais.
  * 9. O radar pode continuar descobrindo.
- * 10. Ações que exigem identidade humana
- *     não são fingidas pelo sistema.
+ * 10. Ações humanas não são fingidas.
+ * 11. O sistema não inventa pagamentos.
+ * 12. O sistema não inventa conclusões.
  */
 export function AgentProvider({
   children,
@@ -109,7 +118,7 @@ export function AgentProvider({
 }) {
   /*
    * ==========================================
-   * ESTADO PRINCIPAL
+   * ESTADOS
    * ==========================================
    */
 
@@ -151,10 +160,8 @@ export function AgentProvider({
    * ==========================================
    * STATUS REF
    * ==========================================
-   *
-   * Permite que os intervalos saibam
-   * se o agente está trabalhando ou pausado.
    */
+
   const statusRef =
     useRef(status)
 
@@ -165,17 +172,31 @@ export function AgentProvider({
    * ==========================================
    * CONTROLE DO RADAR
    * ==========================================
-   *
-   * Impede duas pesquisas simultâneas.
    */
+
   const discoveryRunningRef =
     useRef(false)
+
+  /*
+   * ==========================================
+   * CONTROLE DAS TAREFAS
+   * ==========================================
+   *
+   * Evita iniciar a mesma oportunidade
+   * várias vezes ao mesmo tempo.
+   */
+
+  const taskRunningRef =
+    useRef<Set<string>>(
+      new Set(),
+    )
 
   /*
    * ==========================================
    * ATIVIDADE
    * ==========================================
    */
+
   const pushActivity =
     useCallback(
       (
@@ -208,6 +229,7 @@ export function AgentProvider({
    * O saldo verdadeiro vem exclusivamente
    * de /api/earnings.
    */
+
   const refreshEarnings =
     useCallback(
       async () => {
@@ -273,8 +295,9 @@ export function AgentProvider({
           )
 
           /*
-           * TOTAL CONFIRMADO
+           * SOMENTE dinheiro confirmado.
            */
+
           setTotal(
             Number(
               data.total ?? 0,
@@ -282,8 +305,9 @@ export function AgentProvider({
           )
 
           /*
-           * GANHO DE HOJE
+           * GANHOS DE HOJE
            */
+
           const now =
             new Date()
 
@@ -340,14 +364,12 @@ export function AgentProvider({
    *
    * O /api/discover:
    *
-   * - pesquisa no Tavily
-   * - filtra conteúdo
-   * - grava no banco
-   * - retorna opportunities
-   *
-   * Portanto NÃO chamamos
-   * /api/opportunities com GET.
+   * - pesquisa fontes
+   * - filtra resultados
+   * - salva oportunidades
+   * - devolve catálogo
    */
+
   const discover =
     useCallback(
       async () => {
@@ -355,13 +377,13 @@ export function AgentProvider({
           statusRef.current !==
           'working'
         ) {
-          return
+          return null
         }
 
         if (
           discoveryRunningRef.current
         ) {
-          return
+          return null
         }
 
         discoveryRunningRef.current =
@@ -391,9 +413,10 @@ export function AgentProvider({
 
           /*
            * ==================================
-           * RECEBE AS OPORTUNIDADES DO RADAR
+           * RECEBE O CATÁLOGO
            * ==================================
            */
+
           const incoming =
             Array.isArray(
               data.opportunities,
@@ -402,11 +425,11 @@ export function AgentProvider({
               : []
 
           /*
-           * Validação defensiva.
-           *
-           * Não deixa registros quebrados
-           * entrarem na interface.
+           * ==================================
+           * VALIDAÇÃO
+           * ==================================
            */
+
           const valid =
             incoming.filter(
               (
@@ -427,10 +450,68 @@ export function AgentProvider({
             )
 
           /*
+           * ==================================
+           * ORDENAÇÃO
+           * ==================================
+           *
+           * Primeiro:
+           * oportunidades acionáveis.
+           *
+           * Depois:
+           * demais resultados.
+           *
+           * Em caso de empate:
+           * maior confiança primeiro.
+           */
+
+          const sorted =
+            [...valid].sort(
+              (
+                a,
+                b,
+              ) => {
+                const aAction =
+                  a.requiresUserAction
+                    ? 1
+                    : 0
+
+                const bAction =
+                  b.requiresUserAction
+                    ? 1
+                    : 0
+
+                if (
+                  aAction !==
+                  bAction
+                ) {
+                  return (
+                    bAction -
+                    aAction
+                  )
+                }
+
+                return (
+                  Number(
+                    b.confidence ??
+                      0,
+                  ) -
+                  Number(
+                    a.confidence ??
+                      0,
+                  )
+                )
+              },
+            )
+
+          /*
            * Mantém no máximo 100.
            */
+
           setOpportunities(
-            valid.slice(0, 100),
+            sorted.slice(
+              0,
+              100,
+            ),
           )
 
           /*
@@ -438,6 +519,7 @@ export function AgentProvider({
            * ATIVIDADE DO RADAR
            * ==================================
            */
+
           const discovered =
             Number(
               data.discovered ?? 0,
@@ -451,7 +533,7 @@ export function AgentProvider({
           const total =
             Number(
               data.total ??
-                valid.length,
+                sorted.length,
             )
 
           if (
@@ -502,15 +584,8 @@ export function AgentProvider({
    * ==========================================
    * ATUALIZAR OPORTUNIDADES
    * ==========================================
-   *
-   * IMPORTANTE:
-   *
-   * Não existe mais GET em
-   * /api/opportunities.
-   *
-   * O próprio /api/discover
-   * devolve o catálogo atualizado.
    */
+
   const refreshOpportunities =
     useCallback(
       async () => {
@@ -530,14 +605,8 @@ export function AgentProvider({
    * ==========================================
    * CICLO DO RADAR
    * ==========================================
-   *
-   * Um ciclo significa:
-   *
-   * 1. Consultar fontes.
-   * 2. Filtrar.
-   * 3. Salvar.
-   * 4. Atualizar a tela.
    */
+
   const runDiscoveryCycle =
     useCallback(
       async () => {
@@ -558,9 +627,9 @@ export function AgentProvider({
    * PAGAMENTO CONFIRMADO
    * ==========================================
    *
-   * Este é o ÚNICO caminho que altera
-   * o saldo.
+   * ÚNICO caminho que altera o saldo.
    */
+
   const registerConfirmedEarning =
     useCallback(
       async (
@@ -600,11 +669,8 @@ export function AgentProvider({
               body:
                 JSON.stringify({
                   id: uid(),
-
                   description,
-
                   source,
-
                   amount:
                     earned,
                 }),
@@ -622,6 +688,7 @@ export function AgentProvider({
         /*
          * Recarrega o saldo verdadeiro.
          */
+
         await refreshEarnings()
 
         pushActivity({
@@ -643,14 +710,256 @@ export function AgentProvider({
 
   /*
    * ==========================================
-   * INICIAR OPORTUNIDADE
+   * MARCAR OPORTUNIDADE
+   * ==========================================
+   */
+
+  const updateOpportunityStatus =
+    useCallback(
+      (
+        opportunityId: string,
+        nextStatus:
+          | Opportunity['status'],
+      ) => {
+        setOpportunities(
+          (previous) =>
+            previous.map(
+              (item) =>
+                item.id ===
+                  opportunityId
+                  ? {
+                      ...item,
+                      status:
+                        nextStatus,
+                    }
+                  : item,
+            ),
+        )
+      },
+      [],
+    )
+
+  /*
+   * ==========================================
+   * WORKER DA OPORTUNIDADE
    * ==========================================
    *
    * IMPORTANTE:
    *
-   * Clicar em "Iniciar" NÃO significa
-   * que recebemos dinheiro.
+   * O Worker não finge que acessou
+   * uma plataforma como se fosse o usuário.
+   *
+   * Ele:
+   *
+   * 1. recebe a oportunidade;
+   * 2. cria a tarefa;
+   * 3. verifica se existe ação humana;
+   * 4. coloca em pendência quando necessário;
+   * 5. registra o estado;
+   * 6. deixa o restante do sistema continuar.
    */
+
+  const processOpportunity =
+    useCallback(
+      async (
+        opportunity: Opportunity,
+        taskId: string,
+      ) => {
+        if (
+          statusRef.current !==
+          'working'
+        ) {
+          return
+        }
+
+        /*
+         * Pequena pausa para garantir
+         * que a criação da tarefa
+         * apareça visualmente antes
+         * da análise.
+         *
+         * NÃO é simulação de trabalho.
+         */
+        await new Promise(
+          (resolve) =>
+            setTimeout(
+              resolve,
+              250,
+            ),
+        )
+
+        if (
+          statusRef.current !==
+          'working'
+        ) {
+          return
+        }
+
+        /*
+         * ==================================
+         * VERIFICAÇÃO DE URL
+         * ==================================
+         */
+
+        if (
+          !opportunity.url
+        ) {
+          setTasks(
+            (previous) =>
+              previous.map(
+                (task) =>
+                  task.id ===
+                    taskId
+                    ? {
+                        ...task,
+                        state:
+                          'pending',
+                        progress:
+                          10,
+                        pendingReason:
+                          'A oportunidade não possui uma URL de ação disponível.',
+                      }
+                    : task,
+              ),
+          )
+
+          updateOpportunityStatus(
+            opportunity.id,
+            'pending',
+          )
+
+          pushActivity({
+            kind:
+              'pending',
+
+            message:
+              `Aguardando ação — ${opportunity.title}: não existe URL disponível.`,
+          })
+
+          return
+        }
+
+        /*
+         * ==================================
+         * AÇÃO HUMANA
+         * ==================================
+         *
+         * A maioria das plataformas
+         * legítimas exige cadastro,
+         * login, identidade ou alguma
+         * decisão do usuário.
+         *
+         * Nesses casos NÃO fingimos.
+         */
+
+        if (
+          opportunity.requiresUserAction ||
+          opportunity.requiresSignup
+        ) {
+          setTasks(
+            (previous) =>
+              previous.map(
+                (task) =>
+                  task.id ===
+                    taskId
+                    ? {
+                        ...task,
+
+                        state:
+                          'pending',
+
+                        progress:
+                          25,
+
+                        pendingReason:
+                          opportunity.requiresSignup
+                            ? 'É necessário cadastro ou ação do usuário para continuar.'
+                            : 'É necessária uma ação do usuário para continuar.',
+                      }
+                    : task,
+              ),
+          )
+
+          updateOpportunityStatus(
+            opportunity.id,
+            'pending',
+          )
+
+          pushActivity({
+            kind:
+              'pending',
+
+            message:
+              opportunity.requiresSignup
+                ? `Aguardando cadastro — ${opportunity.title}.`
+                : `Aguardando ação do Ivan — ${opportunity.title}.`,
+          })
+
+          return
+        }
+
+        /*
+         * ==================================
+         * SEM AÇÃO HUMANA DECLARADA
+         * ==================================
+         *
+         * Ainda assim não vamos marcar
+         * como concluída automaticamente.
+         *
+         * O sistema não possui confirmação
+         * externa de execução.
+         */
+
+        setTasks(
+          (previous) =>
+            previous.map(
+              (task) =>
+                task.id ===
+                  taskId
+                  ? {
+                      ...task,
+
+                      state:
+                        'pending',
+
+                      progress:
+                        40,
+
+                      pendingReason:
+                        'Aguardando confirmação da execução pela fonte oficial.',
+                    }
+                  : task,
+            ),
+        )
+
+        updateOpportunityStatus(
+          opportunity.id,
+          'pending',
+        )
+
+        pushActivity({
+          kind:
+            'pending',
+
+          message:
+            `Aguardando confirmação externa — ${opportunity.title}.`,
+        })
+      },
+      [
+        pushActivity,
+        updateOpportunityStatus,
+      ],
+    )
+
+  /*
+   * ==========================================
+   * INICIAR OPORTUNIDADE
+   * ==========================================
+   *
+   * Este é o ponto que agora realmente
+   * aciona o Worker.
+   */
+
   const startOpportunity =
     useCallback(
       (
@@ -663,99 +972,153 @@ export function AgentProvider({
           return
         }
 
-        setOpportunities(
-          (previous) => {
-            const opportunity =
-              previous.find(
-                (item) =>
-                  item.id ===
-                  opportunityId,
-              )
+        /*
+         * Procura a oportunidade
+         * atual.
+         */
 
-            if (
-              !opportunity
-            ) {
-              return previous
-            }
+        const opportunity =
+          opportunities.find(
+            (item) =>
+              item.id ===
+              opportunityId,
+          )
 
-            /*
-             * Não inicia duas vezes
-             * a mesma oportunidade.
-             */
-            if (
-              opportunity.status ===
-              'running'
-            ) {
-              return previous
-            }
+        if (
+          !opportunity
+        ) {
+          pushActivity({
+            kind:
+              'system',
 
-            const task:
-              Task = {
-              id: uid(),
+            message:
+              'Não foi possível iniciar: oportunidade não encontrada.',
+          })
 
-              title:
-                opportunity.title,
+          return
+        }
 
-              source:
-                opportunity.source,
+        /*
+         * Não permite iniciar
+         * novamente uma tarefa já
+         * em execução.
+         */
 
-              state:
-                'running',
+        if (
+          opportunity.status ===
+            'running' ||
+          opportunity.status ===
+            'done'
+        ) {
+          return
+        }
 
-              estimatedValue:
-                Number(
-                  opportunity.estimatedValue ??
-                    0,
-                ),
+        /*
+         * Evita duplicação.
+         */
 
-              progress:
-                0,
+        if (
+          taskRunningRef.current.has(
+            opportunityId,
+          )
+        ) {
+          return
+        }
 
-              startedAt:
-                new Date().toISOString(),
-
-              actionUrl:
-                opportunity.url ??
-                undefined,
-            }
-
-            /*
-             * Coloca a tarefa na fila.
-             */
-            setTasks(
-              (previousTasks) => [
-                task,
-                ...previousTasks,
-              ],
-            )
-
-            pushActivity({
-              kind:
-                'start',
-
-              message:
-                `Oportunidade iniciada — ${opportunity.title}`,
-            })
-
-            /*
-             * Marca a oportunidade
-             * como em execução.
-             */
-            return previous.map(
-              (item) =>
-                item.id ===
-                opportunityId
-                  ? {
-                      ...item,
-                      status:
-                        'running',
-                    }
-                  : item,
-            )
-          },
+        taskRunningRef.current.add(
+          opportunityId,
         )
+
+        /*
+         * Cria a tarefa.
+         */
+
+        const taskId =
+          uid()
+
+        const task:
+          Task = {
+          id:
+            taskId,
+
+          title:
+            opportunity.title,
+
+          source:
+            opportunity.source,
+
+          state:
+            'running',
+
+          estimatedValue:
+            Number(
+              opportunity.estimatedValue ??
+                0,
+            ),
+
+          progress:
+            0,
+
+          startedAt:
+            new Date().toISOString(),
+
+          actionUrl:
+            opportunity.url ??
+            undefined,
+        }
+
+        /*
+         * Coloca na fila.
+         */
+
+        setTasks(
+          (previous) => [
+            task,
+            ...previous,
+          ],
+        )
+
+        /*
+         * Marca oportunidade
+         * como executando.
+         */
+
+        updateOpportunityStatus(
+          opportunityId,
+          'running',
+        )
+
+        /*
+         * Registra atividade.
+         */
+
+        pushActivity({
+          kind:
+            'start',
+
+          message:
+            `Oportunidade iniciada — ${opportunity.title}`,
+        })
+
+        /*
+         * Executa o Worker.
+         */
+
+        void processOpportunity(
+          opportunity,
+          taskId,
+        ).finally(() => {
+          taskRunningRef.current.delete(
+            opportunityId,
+          )
+        })
       },
-      [pushActivity],
+      [
+        opportunities,
+        processOpportunity,
+        pushActivity,
+        updateOpportunityStatus,
+      ],
     )
 
   /*
@@ -763,9 +1126,12 @@ export function AgentProvider({
    * RESOLVER PENDÊNCIA
    * ==========================================
    *
-   * Uma pendência não para o restante
-   * do agente.
+   * A tarefa volta para execução.
+   *
+   * Não marcamos como concluída.
+   * Não registramos dinheiro.
    */
+
   const resolvePending =
     useCallback(
       (
@@ -786,6 +1152,11 @@ export function AgentProvider({
           return
         }
 
+        /*
+         * Retorna a tarefa
+         * para execução.
+         */
+
         setTasks(
           (previous) =>
             previous.map(
@@ -798,12 +1169,64 @@ export function AgentProvider({
                       state:
                         'running',
 
+                      progress:
+                        Math.max(
+                          item.progress,
+                          50,
+                        ),
+
                       pendingReason:
                         undefined,
                     }
                   : item,
             ),
         )
+
+        /*
+         * Procura oportunidade
+         * correspondente.
+         */
+
+        const opportunity =
+          opportunities.find(
+            (item) =>
+              item.title ===
+                task.title &&
+              item.source ===
+                task.source,
+          )
+
+        if (
+          opportunity
+        ) {
+          updateOpportunityStatus(
+            opportunity.id,
+            'running',
+          )
+
+          /*
+           * Reprocessa a etapa.
+           */
+
+          if (
+            !taskRunningRef.current.has(
+              opportunity.id,
+            )
+          ) {
+            taskRunningRef.current.add(
+              opportunity.id,
+            )
+
+            void processOpportunity(
+              opportunity,
+              task.id,
+            ).finally(() => {
+              taskRunningRef.current.delete(
+                opportunity.id,
+              )
+            })
+          }
+        }
 
         pushActivity({
           kind:
@@ -814,8 +1237,11 @@ export function AgentProvider({
         })
       },
       [
+        opportunities,
+        processOpportunity,
         pushActivity,
         tasks,
+        updateOpportunityStatus,
       ],
     )
 
@@ -824,8 +1250,9 @@ export function AgentProvider({
    * PARAR
    * ==========================================
    *
-   * SOMENTE o usuário chama isso.
+   * SOMENTE o usuário chama.
    */
+
   const stop =
     useCallback(() => {
       setStatus(
@@ -846,6 +1273,7 @@ export function AgentProvider({
    * RETOMAR
    * ==========================================
    */
+
   const resume =
     useCallback(() => {
       setStatus(
@@ -861,9 +1289,9 @@ export function AgentProvider({
       })
 
       /*
-       * Pesquisa imediatamente
-       * ao retomar.
+       * Pesquisa imediatamente.
        */
+
       void runDiscoveryCycle()
     }, [
       pushActivity,
@@ -875,6 +1303,7 @@ export function AgentProvider({
    * INTEGRAÇÕES
    * ==========================================
    */
+
   const toggleIntegration =
     useCallback(
       (
@@ -887,7 +1316,7 @@ export function AgentProvider({
                 integration,
               ) =>
                 integration.key ===
-                key
+                  key
                   ? {
                       ...integration,
 
@@ -905,12 +1334,8 @@ export function AgentProvider({
    * ==========================================
    * PRIMEIRA EXECUÇÃO
    * ==========================================
-   *
-   * Quando o aplicativo abre:
-   *
-   * 1. Carrega saldo.
-   * 2. Executa radar.
    */
+
   useEffect(() => {
     void refreshEarnings()
 
@@ -926,9 +1351,8 @@ export function AgentProvider({
    * ==========================================
    *
    * A cada 30 segundos.
-   *
-   * Isso NÃO altera o status do agente.
    */
+
   useEffect(() => {
     const interval =
       setInterval(
@@ -956,8 +1380,9 @@ export function AgentProvider({
    *
    * A cada 5 minutos.
    *
-   * Meta atingida NÃO interfere.
+   * META NÃO PARA.
    */
+
   useEffect(() => {
     const interval =
       setInterval(
@@ -980,51 +1405,10 @@ export function AgentProvider({
 
   /*
    * ==========================================
-   * REFRESH VISUAL
-   * ==========================================
-   *
-   * A cada minuto.
-   *
-   * Como o radar já retorna a lista,
-   * podemos simplesmente atualizar
-   * através do /api/discover.
-   *
-   * Para não disparar Tavily a cada minuto,
-   * NÃO fazemos nova descoberta aqui.
-   *
-   * O radar completo acontece a cada 5 min.
-   */
-  useEffect(() => {
-    const interval =
-      setInterval(
-        () => {
-          if (
-            statusRef.current ===
-            'working'
-          ) {
-            /*
-             * Apenas mantém o saldo
-             * atualizado aqui.
-             *
-             * O catálogo é atualizado
-             * pelo radar de 5 minutos.
-             */
-          }
-        },
-        60_000,
-      )
-
-    return () =>
-      clearInterval(
-        interval,
-      )
-  }, [])
-
-  /*
-   * ==========================================
    * TAREFAS EM EXECUÇÃO
    * ==========================================
    */
+
   const runningTasks =
     useMemo(
       () =>
@@ -1041,6 +1425,7 @@ export function AgentProvider({
    * TAREFAS PENDENTES
    * ==========================================
    */
+
   const pendingTasks =
     useMemo(
       () =>
@@ -1057,6 +1442,7 @@ export function AgentProvider({
    * CONTEXT
    * ==========================================
    */
+
   const value:
     AgentContextValue = {
     status,
@@ -1102,6 +1488,7 @@ export function AgentProvider({
    * PROVIDER
    * ==========================================
    */
+
   return (
     <AgentContext.Provider
       value={value}
@@ -1116,6 +1503,7 @@ export function AgentProvider({
  * HOOK
  * ==========================================
  */
+
 export function useAgent() {
   const context =
     useContext(
