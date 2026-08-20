@@ -13,7 +13,40 @@ type TavilyResponse = {
   results?: TavilyResult[]
 }
 
-const CATEGORIES = [
+const SEARCHES = [
+  {
+    query:
+      'legitimate paid online opportunities apply now remote microtasks paid work',
+    category: 'microtasks',
+  },
+  {
+    query:
+      'legitimate paid research studies participant sign up apply online',
+    category: 'surveys',
+  },
+  {
+    query:
+      'paid website app testing become tester sign up',
+    category: 'testing',
+  },
+  {
+    query:
+      'remote freelance jobs apply now get paid legitimate',
+    category: 'freelance',
+  },
+  {
+    query:
+      'content creator monetization programs apply join get paid',
+    category: 'content',
+  },
+  {
+    query:
+      'affiliate programs join apply become affiliate start earning',
+    category: 'affiliate',
+  },
+]
+
+const ALLOWED_CATEGORIES = [
   'microtasks',
   'freelance',
   'surveys',
@@ -23,196 +56,127 @@ const CATEGORIES = [
 ] as const
 
 type Category =
-  (typeof CATEGORIES)[number]
+  (typeof ALLOWED_CATEGORIES)[number]
 
 /*
- * ============================================================
- * RADAR GLOBAL V3
- * ============================================================
+ * PALAVRAS QUE INDICAM CONTEÚDO
  *
- * O objetivo é descobrir FONTES DIRETAS.
- *
- * Não consideramos:
- *
- * - artigos;
- * - blogs;
- * - listas;
- * - vídeos;
- * - Reddit;
- * - guias;
- * - notícias;
- * - páginas comparativas.
- *
- * Oportunidade != dinheiro.
- *
- * Dinheiro real continua somente em /api/earnings.
+ * Se aparecerem no título ou URL,
+ * normalmente estamos diante de artigo,
+ * guia, notícia ou explicação.
  */
-
-/*
- * ============================================================
- * PESQUISAS
- * ============================================================
- */
-
-const SEARCHES: {
-  query: string
-  category: Category
-}[] = [
-  {
-    query:
-      'official platform get paid microtasks workers tasks signup',
-    category: 'microtasks',
-  },
-
-  {
-    query:
-      'official paid research participant platform signup studies',
-    category: 'surveys',
-  },
-
-  {
-    query:
-      'official website testing platform get paid testers signup',
-    category: 'testing',
-  },
-
-  {
-    query:
-      'official freelance marketplace remote jobs freelancers',
-    category: 'freelance',
-  },
-
-  {
-    query:
-      'official affiliate partner program commission apply',
-    category: 'affiliate',
-  },
-
-  {
-    query:
-      'official creator monetization platform creators earn',
-    category: 'content',
-  },
-]
-
-/*
- * ============================================================
- * DOMÍNIOS CONHECIDOS
- * ============================================================
- *
- * Esses domínios recebem prioridade.
- */
-
-const TRUSTED_DOMAINS = [
-  'prolific.com',
-  'usertesting.com',
-  'userlytics.com',
-  'testbirds.com',
-  'respondent.io',
-  'clickworker.com',
-  'toloka.ai',
-  'appen.com',
-  'crowdgen.com',
-  'fiverr.com',
-  'upwork.com',
-  'freelancer.com',
-  'peopleperhour.com',
-  'contra.com',
-  'impact.com',
-  'partnerstack.com',
-  'cj.com',
-  'awin.com',
-  'rakutenadvertising.com',
-  'patreon.com',
-  'substack.com',
-  'facebook.com',
-  'creators.facebook.com',
-]
-
-/*
- * ============================================================
- * DOMÍNIOS QUE NÃO DEVEM VIRAR OPORTUNIDADE
- * ============================================================
- */
-
-const BLOCKED_DOMAINS = [
-  'youtube.com',
-  'youtu.be',
-  'reddit.com',
-  'quora.com',
-  'medium.com',
-  'forbes.com',
-  'businessinsider.com',
-  'linkedin.com',
-  'facebook.com/groups',
-]
-
-/*
- * ============================================================
- * PALAVRAS DE ARTIGO
- * ============================================================
- */
-
-const BLOCKED_TITLE_WORDS = [
-  'best',
-  'top ',
-  'top 10',
-  'top 20',
-  'top 50',
+const CONTENT_BLOCKLIST = [
+  'blog',
+  'article',
+  'articles',
   'guide',
   'guides',
-  'list',
-  'lists',
-  'review',
-  'reviews',
-  'comparison',
-  'compare',
-  'versus',
-  ' vs ',
-  'how to',
-  'ways to',
+  'how-to',
+  'howto',
+  'explained',
+  'what-is',
+  'what-are',
+  'best-',
+  'best_',
+  'top-',
+  'top_',
   'tips',
-  'ideas',
-  'article',
+  'learn',
   'news',
-  'blog',
-  'roundup',
+  'resources',
+  'commission-structures',
+  'commission-structure',
+  'marketing-guide',
+]
+
+/*
+ * FRASES QUE NORMALMENTE INDICAM
+ * QUE É APENAS MATERIAL INFORMATIVO.
+ */
+const TITLE_BLOCKLIST = [
+  'how do',
+  'how to',
+  'what is',
+  'what are',
+  'best ',
+  'top ',
+  'guide',
+  'explained',
+  'tips',
+  'learn about',
+  'everything you need to know',
+  'commission structure',
+  'commission structures',
+  'make money',
+  'ways to earn',
   'ultimate guide',
-  'websites that',
-  'programs that',
-  'programs in 2026',
-  'programs in 2025',
-  'marketplaces updated',
 ]
 
 /*
- * ============================================================
- * CAMINHOS EDITORIAIS
- * ============================================================
+ * SINAIS DE AÇÃO REAL.
+ *
+ * A página precisa indicar alguma ação
+ * que possa levar a uma oportunidade.
  */
-
-const BLOCKED_PATHS = [
-  '/blog',
-  '/blogs',
-  '/article',
-  '/articles',
-  '/news',
-  '/guide',
-  '/guides',
-  '/resources',
-  '/learn',
-  '/knowledge',
-  '/community',
-  '/forum',
-  '/forums',
-  '/discussion',
+const ACTION_SIGNALS = [
+  'apply',
+  'apply now',
+  'sign up',
+  'signup',
+  'join',
+  'join now',
+  'become a partner',
+  'become an affiliate',
+  'start earning',
+  'get paid',
+  'earn money',
+  'earn',
+  'register',
+  'create account',
+  'create an account',
+  'work with us',
+  'freelancer',
+  'freelance job',
+  'remote job',
+  'paid study',
+  'paid research',
+  'become a tester',
+  'user tester',
+  'testing opportunity',
 ]
 
-/*
- * ============================================================
- * ID
- * ============================================================
- */
+async function ensureTable() {
+  await sql`
+    CREATE TABLE IF NOT EXISTS opportunities (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      source TEXT NOT NULL,
+      category TEXT NOT NULL,
+      estimated_value NUMERIC(12,2) NOT NULL DEFAULT 0,
+      confidence INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'new',
+      url TEXT,
+      requires_signup BOOLEAN NOT NULL DEFAULT TRUE,
+      requires_user_action BOOLEAN NOT NULL DEFAULT TRUE,
+      language TEXT NOT NULL DEFAULT 'global',
+      automated_preparation BOOLEAN NOT NULL DEFAULT FALSE,
+      discovered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `
+
+  await sql`
+    ALTER TABLE opportunities
+    ADD COLUMN IF NOT EXISTS language TEXT
+    NOT NULL DEFAULT 'global'
+  `
+
+  await sql`
+    ALTER TABLE opportunities
+    ADD COLUMN IF NOT EXISTS automated_preparation BOOLEAN
+    NOT NULL DEFAULT FALSE
+  `
+}
 
 function makeId(url: string) {
   return `tavily-${createHash('sha256')
@@ -221,301 +185,146 @@ function makeId(url: string) {
     .slice(0, 24)}`
 }
 
-/*
- * ============================================================
- * TEXTO
- * ============================================================
- */
-
-function cleanText(
-  value: string,
-) {
+function cleanText(value: string) {
   return value
     .replace(/\s+/g, ' ')
     .trim()
 }
 
-/*
- * ============================================================
- * DOMÍNIO
- * ============================================================
- */
-
-function getSource(
-  url: string,
-) {
+function getSource(url: string) {
   try {
-    return new URL(url)
-      .hostname
+    return new URL(url).hostname
       .replace(/^www\./, '')
-      .toLowerCase()
   } catch {
-    return 'web'
+    return 'Web'
   }
 }
 
-/*
- * ============================================================
- * DOMÍNIO CONFIÁVEL
- * ============================================================
- */
+function calculateConfidence(score = 0) {
+  const value = Math.round(
+    70 +
+      Math.min(
+        Math.max(score, 0),
+        1,
+      ) *
+        25,
+  )
 
-function isTrustedDomain(
-  hostname: string,
+  return Math.min(value, 95)
+}
+
+/*
+ * Verifica se a URL parece ser
+ * uma página de conteúdo.
+ */
+function isBlockedUrl(url: string) {
+  const normalized =
+    url.toLowerCase()
+
+  return CONTENT_BLOCKLIST.some(
+    (word) =>
+      normalized.includes(word),
+  )
+}
+
+/*
+ * Verifica se o título parece
+ * ser apenas conteúdo educativo.
+ */
+function isBlockedTitle(
+  title: string,
 ) {
-  return TRUSTED_DOMAINS.some(
-    (domain) =>
-      hostname === domain ||
-      hostname.endsWith(
-        `.${domain}`,
+  const normalized =
+    title.toLowerCase()
+
+  return TITLE_BLOCKLIST.some(
+    (phrase) =>
+      normalized.includes(
+        phrase,
       ),
   )
 }
 
 /*
- * ============================================================
- * DOMÍNIO BLOQUEADO
- * ============================================================
+ * Verifica se existe algum sinal
+ * de oportunidade acionável.
  */
-
-function isBlockedDomain(
-  hostname: string,
+function hasActionSignal(
+  title: string,
+  content: string,
 ) {
-  return BLOCKED_DOMAINS.some(
-    (domain) =>
-      hostname === domain ||
-      hostname.endsWith(
-        `.${domain}`,
-      ),
+  const text =
+    `${title} ${content}`
+      .toLowerCase()
+
+  return ACTION_SIGNALS.some(
+    (signal) =>
+      text.includes(signal),
   )
 }
 
 /*
- * ============================================================
  * FILTRO PRINCIPAL
- * ============================================================
+ *
+ * A oportunidade precisa:
+ *
+ * 1. Ter URL.
+ * 2. Ter título.
+ * 3. Não parecer artigo.
+ * 4. Ter sinal de ação.
  */
-
-function classifyResult(
+function isRealOpportunity(
   result: TavilyResult,
 ) {
   if (
     !result.url ||
     !result.title
   ) {
-    return {
-      valid: false,
-      reason: 'missing',
-    }
+    return false
   }
 
   const url =
     result.url.trim()
 
-  if (
-    !url.startsWith(
-      'https://',
-    ) &&
-    !url.startsWith(
-      'http://',
-    )
-  ) {
-    return {
-      valid: false,
-      reason: 'invalid-url',
-    }
-  }
-
-  let parsed: URL
-
-  try {
-    parsed =
-      new URL(url)
-  } catch {
-    return {
-      valid: false,
-      reason: 'invalid-url',
-    }
-  }
-
-  const hostname =
-    parsed.hostname
-      .replace(/^www\./, '')
-      .toLowerCase()
-
-  const pathname =
-    parsed.pathname.toLowerCase()
-
   const title =
-    cleanText(
-      result.title,
-    ).toLowerCase()
+    cleanText(result.title)
 
-  /*
-   * Domínio editorial conhecido.
-   */
-  if (
-    isBlockedDomain(
-      hostname,
-    )
-  ) {
-    return {
-      valid: false,
-      reason: 'blocked-domain',
-    }
-  }
-
-  /*
-   * Título de artigo/lista.
-   */
-  if (
-    BLOCKED_TITLE_WORDS.some(
-      (word) =>
-        title.includes(word),
-    )
-  ) {
-    return {
-      valid: false,
-      reason: 'editorial-title',
-    }
-  }
-
-  /*
-   * Caminho editorial.
-   *
-   * Domínio confiável pode possuir
-   * páginas /blog legítimas, mas ainda
-   * assim o título precisa passar.
-   */
-  if (
-    BLOCKED_PATHS.some(
-      (path) =>
-        pathname === path ||
-        pathname.startsWith(
-          `${path}/`,
-        ),
-    ) &&
-    !isTrustedDomain(
-      hostname,
-    )
-  ) {
-    return {
-      valid: false,
-      reason: 'editorial-path',
-    }
-  }
-
-  /*
-   * Conteúdo textual.
-   */
   const content =
     cleanText(
-      result.content ??
-        '',
-    ).toLowerCase()
+      result.content ?? '',
+    )
 
-  /*
-   * Sinais de uma página operacional.
-   */
-  const operationalSignals = [
-    'sign up',
-    'signup',
-    'register',
-    'apply',
-    'application',
-    'join',
-    'get paid',
-    'paid',
-    'earn',
-    'commission',
-    'freelance',
-    'tasks',
-    'task',
-    'participant',
-    'tester',
-    'creator',
-    'affiliate',
-    'partner',
-    'worker',
-  ]
-
-  const signalCount =
-    operationalSignals.filter(
-      (signal) =>
-        title.includes(
-          signal,
-        ) ||
-        content.includes(
-          signal,
-        ),
-    ).length
-
-  /*
-   * Se não for domínio conhecido,
-   * exigimos sinais suficientes.
-   */
   if (
-    !isTrustedDomain(
-      hostname,
-    ) &&
-    signalCount < 2
+    !url.startsWith(
+      'http',
+    )
   ) {
-    return {
-      valid: false,
-      reason: 'weak-source',
-    }
+    return false
   }
 
-  return {
-    valid: true,
-    reason: isTrustedDomain(
-      hostname,
-    )
-      ? 'trusted'
-      : 'candidate',
+  if (
+    isBlockedUrl(url)
+  ) {
+    return false
   }
+
+  if (
+    isBlockedTitle(title)
+  ) {
+    return false
+  }
+
+  if (
+    !hasActionSignal(
+      title,
+      content,
+    )
+  ) {
+    return false
+  }
+
+  return true
 }
-
-/*
- * ============================================================
- * CONFIANÇA
- * ============================================================
- */
-
-function calculateConfidence(
-  score = 0,
-  trusted = false,
-) {
-  const normalized =
-    Math.min(
-      Math.max(
-        Number(score) || 0,
-        0,
-      ),
-      1,
-    )
-
-  let confidence =
-    Math.round(
-      65 +
-        normalized * 20,
-    )
-
-  if (trusted) {
-    confidence += 10
-  }
-
-  return Math.min(
-    confidence,
-    95,
-  )
-}
-
-/*
- * ============================================================
- * TAVILY
- * ============================================================
- */
 
 async function searchTavily(
   query: string,
@@ -534,34 +343,23 @@ async function searchTavily(
       'https://api.tavily.com/search',
       {
         method: 'POST',
-
         headers: {
           'Content-Type':
             'application/json',
         },
-
         body: JSON.stringify({
           api_key:
             apiKey,
-
           query,
-
           search_depth:
             'advanced',
-
-          topic:
-            'general',
-
-          max_results:
-            10,
-
+          topic: 'general',
+          max_results: 8,
           include_answer:
             false,
-
           include_raw_content:
             false,
         }),
-
         cache:
           'no-store',
       },
@@ -576,29 +374,17 @@ async function searchTavily(
     )
   }
 
-  return (
-    (await response.json()) as
-      TavilyResponse
-  )
+  return (await response.json()) as TavilyResponse
 }
-
-/*
- * ============================================================
- * SALVAR
- * ============================================================
- */
 
 async function saveOpportunity(
   result: TavilyResult,
   category: Category,
 ) {
-  const classification =
-    classifyResult(
+  if (
+    !isRealOpportunity(
       result,
     )
-
-  if (
-    !classification.valid
   ) {
     return false
   }
@@ -606,17 +392,12 @@ async function saveOpportunity(
   const url =
     result.url!.trim()
 
+  const id =
+    makeId(url)
+
   const title =
     cleanText(
       result.title!,
-    )
-
-  const source =
-    getSource(url)
-
-  const trusted =
-    isTrustedDomain(
-      source,
     )
 
   const confidence =
@@ -624,11 +405,10 @@ async function saveOpportunity(
       Number(
         result.score ?? 0,
       ),
-      trusted,
     )
 
-  const id =
-    makeId(url)
+  const source =
+    getSource(url)
 
   await sql`
     INSERT INTO opportunities (
@@ -666,19 +446,14 @@ async function saveOpportunity(
     DO UPDATE SET
       title =
         EXCLUDED.title,
-
       source =
         EXCLUDED.source,
-
       category =
         EXCLUDED.category,
-
       confidence =
         EXCLUDED.confidence,
-
       url =
         EXCLUDED.url,
-
       discovered_at =
         NOW()
   `
@@ -687,56 +462,52 @@ async function saveOpportunity(
 }
 
 /*
- * ============================================================
- * GET
- * ============================================================
+ * LIMPA O CATÁLOGO ANTIGO.
+ *
+ * Remove oportunidades que claramente
+ * parecem artigos ou conteúdo.
  */
+async function cleanOldContent() {
+  for (
+    const phrase of TITLE_BLOCKLIST
+  ) {
+    await sql`
+      DELETE FROM opportunities
+      WHERE LOWER(title)
+      LIKE ${`%${phrase.toLowerCase()}%`}
+    `
+  }
+
+  for (
+    const word of CONTENT_BLOCKLIST
+  ) {
+    await sql`
+      DELETE FROM opportunities
+      WHERE LOWER(url)
+      LIKE ${`%${word.toLowerCase()}%`}
+    `
+  }
+}
 
 export async function GET() {
   try {
     await ensureTable()
 
     /*
-     * ========================================================
-     * LIMPEZA
-     * ========================================================
-     *
-     * Remove resultados Tavily antigos.
-     *
-     * As fontes fixas como:
-     * source-prolific
-     * source-usertesting
-     * source-clickworker
-     * source-fiverr
-     *
-     * NÃO são apagadas.
+     * Limpa lixo antigo antes
+     * de executar o novo radar.
      */
-
-    await sql`
-      DELETE FROM opportunities
-      WHERE id LIKE 'tavily-%'
-    `
+    await cleanOldContent()
 
     let discovered = 0
-
+    let searches = 0
     let rejected = 0
 
-    let searches = 0
-
-    const rejectionReasons: Record<
-      string,
-      number
-    > = {}
-
-    const errors: string[] =
-      []
+    const errors: string[] = []
 
     /*
-     * ========================================================
-     * PESQUISAS
-     * ========================================================
+     * PESQUISA GLOBAL
      */
-
     for (
       const search of SEARCHES
     ) {
@@ -758,58 +529,42 @@ export async function GET() {
         for (
           const result of results
         ) {
-          const classification =
-            classifyResult(
+          if (
+            !isRealOpportunity(
               result,
             )
-
-          if (
-            !classification.valid
           ) {
             rejected += 1
-
-            rejectionReasons[
-              classification.reason
-            ] =
-              (
-                rejectionReasons[
-                  classification.reason
-                ] ?? 0
-              ) + 1
-
             continue
           }
 
           const saved =
             await saveOpportunity(
               result,
-              search.category,
+              search.category as Category,
             )
 
           if (saved) {
             discovered += 1
           }
         }
-      } catch (error) {
+      } catch (
+        error
+      ) {
         console.error(
-          'Erro na pesquisa Tavily:',
+          'Erro em pesquisa Tavily:',
           error,
         )
 
         errors.push(
-          error instanceof Error
-            ? error.message
-            : String(error),
+          String(error),
         )
       }
     }
 
     /*
-     * ========================================================
-     * CATÁLOGO
-     * ========================================================
+     * DEVOLVE O CATÁLOGO FINAL.
      */
-
     const rows =
       await sql`
         SELECT
@@ -829,7 +584,6 @@ export async function GET() {
           created_at
         FROM opportunities
         ORDER BY
-          confidence DESC,
           discovered_at DESC
         LIMIT 100
       `
@@ -837,8 +591,7 @@ export async function GET() {
     const opportunities =
       rows.map(
         (row) => ({
-          id:
-            row.id,
+          id: row.id,
 
           title:
             row.title,
@@ -896,20 +649,18 @@ export async function GET() {
       )
 
     return NextResponse.json({
-      success:
-        true,
+      success: true,
 
       radar: {
-        active:
-          true,
+        active: true,
 
         engine:
-          'Tavily V3',
+          'Tavily',
 
         searches,
 
         categories:
-          CATEGORIES,
+          ALLOWED_CATEGORIES,
 
         continuous:
           true,
@@ -920,22 +671,19 @@ export async function GET() {
         onlyManualStop:
           true,
 
-        confirmedEarningsOnly:
+        estimatedValuesAreNotMoney:
           true,
 
-        estimatedValuesAreNotMoney:
+        confirmedEarningsOnly:
           true,
 
         identityActionsRequireUser:
           true,
 
-        directSourceFiltering:
+        contentFilter:
           true,
 
-        editorialFiltering:
-          true,
-
-        oldTavilyResultsCleaned:
+        actionRequired:
           true,
       },
 
@@ -943,31 +691,30 @@ export async function GET() {
 
       rejected,
 
-      rejectionReasons,
-
       total:
         opportunities.length,
 
       opportunities,
 
       message:
-        'Radar V3 executado. Resultados editoriais antigos foram removidos e novas fontes foram filtradas.',
-      
+        'Radar V4 executado com filtro de oportunidades acionáveis.',
+
       errors:
         errors.length > 0
           ? errors
           : undefined,
     })
-  } catch (error) {
+  } catch (
+    error
+  ) {
     console.error(
-      'Erro no radar V3:',
+      'Erro no radar V4:',
       error,
     )
 
     return NextResponse.json(
       {
-        success:
-          false,
+        success: false,
 
         error:
           error instanceof Error
@@ -978,48 +725,8 @@ export async function GET() {
           [],
       },
       {
-        status:
-          500,
+        status: 500,
       },
     )
   }
-}
-
-/*
- * ============================================================
- * GARANTIR TABELA
- * ============================================================
- */
-
-async function ensureTable() {
-  await sql`
-    CREATE TABLE IF NOT EXISTS opportunities (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      source TEXT NOT NULL,
-      category TEXT NOT NULL,
-      estimated_value NUMERIC(12,2) NOT NULL DEFAULT 0,
-      confidence INTEGER NOT NULL DEFAULT 0,
-      status TEXT NOT NULL DEFAULT 'new',
-      url TEXT,
-      requires_signup BOOLEAN NOT NULL DEFAULT TRUE,
-      requires_user_action BOOLEAN NOT NULL DEFAULT TRUE,
-      language TEXT NOT NULL DEFAULT 'global',
-      automated_preparation BOOLEAN NOT NULL DEFAULT FALSE,
-      discovered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `
-
-  await sql`
-    ALTER TABLE opportunities
-    ADD COLUMN IF NOT EXISTS language TEXT
-    NOT NULL DEFAULT 'global'
-  `
-
-  await sql`
-    ALTER TABLE opportunities
-    ADD COLUMN IF NOT EXISTS automated_preparation BOOLEAN
-    NOT NULL DEFAULT FALSE
-  `
 }
