@@ -59,12 +59,11 @@ type Category =
   (typeof ALLOWED_CATEGORIES)[number]
 
 /*
- * PALAVRAS QUE INDICAM CONTEÚDO
- *
- * Se aparecerem no título ou URL,
- * normalmente estamos diante de artigo,
- * guia, notícia ou explicação.
+ * ==========================================
+ * FILTROS DE CONTEÚDO
+ * ==========================================
  */
+
 const CONTENT_BLOCKLIST = [
   'blog',
   'article',
@@ -87,12 +86,9 @@ const CONTENT_BLOCKLIST = [
   'commission-structures',
   'commission-structure',
   'marketing-guide',
+  'case-study',
 ]
 
-/*
- * FRASES QUE NORMALMENTE INDICAM
- * QUE É APENAS MATERIAL INFORMATIVO.
- */
 const TITLE_BLOCKLIST = [
   'how do',
   'how to',
@@ -110,14 +106,17 @@ const TITLE_BLOCKLIST = [
   'make money',
   'ways to earn',
   'ultimate guide',
+  'comparison',
+  'reviews',
+  'review of',
 ]
 
 /*
- * SINAIS DE AÇÃO REAL.
- *
- * A página precisa indicar alguma ação
- * que possa levar a uma oportunidade.
+ * ==========================================
+ * SINAIS DE AÇÃO
+ * ==========================================
  */
+
 const ACTION_SIGNALS = [
   'apply',
   'apply now',
@@ -143,7 +142,89 @@ const ACTION_SIGNALS = [
   'become a tester',
   'user tester',
   'testing opportunity',
+  'participant',
+  'participants',
+  'paid survey',
+  'paid surveys',
 ]
+
+/*
+ * ==========================================
+ * SINAIS DE CADASTRO
+ * ==========================================
+ */
+
+const SIGNUP_SIGNALS = [
+  'sign up',
+  'signup',
+  'register',
+  'registration',
+  'create account',
+  'create an account',
+  'join now',
+  'join us',
+  'become a member',
+  'create your profile',
+  'apply now',
+]
+
+/*
+ * ==========================================
+ * SINAIS DE AÇÃO HUMANA
+ * ==========================================
+ */
+
+const HUMAN_ACTION_SIGNALS = [
+  'complete your profile',
+  'verify your identity',
+  'identity verification',
+  'verify your email',
+  'upload your id',
+  'upload identification',
+  'complete registration',
+  'submit application',
+  'apply now',
+  'take the test',
+  'complete the test',
+  'complete a survey',
+  'participate in the study',
+  'accept the task',
+  'claim task',
+  'claim opportunity',
+]
+
+/*
+ * ==========================================
+ * SINAIS DE PAGAMENTO
+ * ==========================================
+ */
+
+const PAYMENT_SIGNALS = [
+  'paid',
+  'payment',
+  'pays',
+  'pay',
+  'earn',
+  'reward',
+  'rewards',
+  'cash',
+  'usd',
+  'dollar',
+  'dollars',
+  '$',
+  'compensation',
+  'incentive',
+  'per task',
+  'per study',
+  'per test',
+  'per survey',
+]
+
+/*
+ * ==========================================
+ * BANCO
+ * ==========================================
+ */
 
 async function ensureTable() {
   await sql`
@@ -178,6 +259,12 @@ async function ensureTable() {
   `
 }
 
+/*
+ * ==========================================
+ * UTILITÁRIOS
+ * ==========================================
+ */
+
 function makeId(url: string) {
   return `tavily-${createHash('sha256')
     .update(url)
@@ -200,26 +287,20 @@ function getSource(url: string) {
   }
 }
 
-function calculateConfidence(score = 0) {
-  const value = Math.round(
-    70 +
-      Math.min(
-        Math.max(score, 0),
-        1,
-      ) *
-        25,
-  )
-
-  return Math.min(value, 95)
+function normalizeText(value: string) {
+  return cleanText(value)
+    .toLowerCase()
 }
 
 /*
- * Verifica se a URL parece ser
- * uma página de conteúdo.
+ * ==========================================
+ * FILTRO DE URL
+ * ==========================================
  */
+
 function isBlockedUrl(url: string) {
   const normalized =
-    url.toLowerCase()
+    normalizeText(url)
 
   return CONTENT_BLOCKLIST.some(
     (word) =>
@@ -228,14 +309,16 @@ function isBlockedUrl(url: string) {
 }
 
 /*
- * Verifica se o título parece
- * ser apenas conteúdo educativo.
+ * ==========================================
+ * FILTRO DE TÍTULO
+ * ==========================================
  */
+
 function isBlockedTitle(
   title: string,
 ) {
   const normalized =
-    title.toLowerCase()
+    normalizeText(title)
 
   return TITLE_BLOCKLIST.some(
     (phrase) =>
@@ -246,16 +329,19 @@ function isBlockedTitle(
 }
 
 /*
- * Verifica se existe algum sinal
- * de oportunidade acionável.
+ * ==========================================
+ * SINAL DE AÇÃO
+ * ==========================================
  */
+
 function hasActionSignal(
   title: string,
   content: string,
 ) {
   const text =
-    `${title} ${content}`
-      .toLowerCase()
+    normalizeText(
+      `${title} ${content}`,
+    )
 
   return ACTION_SIGNALS.some(
     (signal) =>
@@ -264,15 +350,205 @@ function hasActionSignal(
 }
 
 /*
- * FILTRO PRINCIPAL
- *
- * A oportunidade precisa:
- *
- * 1. Ter URL.
- * 2. Ter título.
- * 3. Não parecer artigo.
- * 4. Ter sinal de ação.
+ * ==========================================
+ * SINAL DE CADASTRO
+ * ==========================================
  */
+
+function requiresSignup(
+  title: string,
+  content: string,
+) {
+  const text =
+    normalizeText(
+      `${title} ${content}`,
+    )
+
+  return SIGNUP_SIGNALS.some(
+    (signal) =>
+      text.includes(signal),
+  )
+}
+
+/*
+ * ==========================================
+ * SINAL DE AÇÃO HUMANA
+ * ==========================================
+ */
+
+function requiresHumanAction(
+  title: string,
+  content: string,
+) {
+  const text =
+    normalizeText(
+      `${title} ${content}`,
+    )
+
+  return HUMAN_ACTION_SIGNALS.some(
+    (signal) =>
+      text.includes(signal),
+  )
+}
+
+/*
+ * ==========================================
+ * SINAL DE PAGAMENTO
+ * ==========================================
+ */
+
+function hasPaymentSignal(
+  title: string,
+  content: string,
+) {
+  const text =
+    normalizeText(
+      `${title} ${content}`,
+    )
+
+  return PAYMENT_SIGNALS.some(
+    (signal) =>
+      text.includes(signal),
+  )
+}
+
+/*
+ * ==========================================
+ * EXTRAÇÃO DE VALOR
+ * ==========================================
+ *
+ * Só usa valores que aparecem no
+ * resultado da própria fonte pesquisada.
+ *
+ * Não inventa valor.
+ */
+
+function extractEstimatedValue(
+  title: string,
+  content: string,
+) {
+  const text =
+    `${title} ${content}`
+
+  const patterns = [
+    /(?:\$|usd\s*)\s?(\d+(?:[.,]\d{1,2})?)/gi,
+
+    /(\d+(?:[.,]\d{1,2})?)\s?(?:usd|us dollars)/gi,
+
+    /(?:pays?|paid|earn|reward|compensation|payment)[^$]{0,40}\$?\s?(\d+(?:[.,]\d{1,2})?)/gi,
+  ]
+
+  const values: number[] = []
+
+  for (
+    const pattern of patterns
+  ) {
+    const matches =
+      text.matchAll(pattern)
+
+    for (
+      const match of matches
+    ) {
+      const raw =
+        match[1]
+
+      if (!raw) {
+        continue
+      }
+
+      const normalized =
+        raw.replace(
+          ',',
+          '.',
+        )
+
+      const value =
+        Number(
+          normalized,
+        )
+
+      if (
+        Number.isFinite(
+          value,
+        ) &&
+        value > 0 &&
+        value <= 10000
+      ) {
+        values.push(
+          value,
+        )
+      }
+    }
+  }
+
+  if (
+    values.length === 0
+  ) {
+    return 0
+  }
+
+  /*
+   * Usa o maior valor encontrado
+   * como estimativa potencial.
+   *
+   * Continua sendo apenas estimativa.
+   */
+
+  return Number(
+    Math.max(
+      ...values,
+    ).toFixed(2),
+  )
+}
+
+/*
+ * ==========================================
+ * CONFIANÇA
+ * ==========================================
+ */
+
+function calculateConfidence(
+  score = 0,
+  hasAction = false,
+  hasPayment = false,
+) {
+  let value =
+    65 +
+    Math.min(
+      Math.max(
+        score,
+        0,
+      ),
+      1,
+    ) *
+      20
+
+  if (
+    hasAction
+  ) {
+    value += 5
+  }
+
+  if (
+    hasPayment
+  ) {
+    value += 5
+  }
+
+  return Math.min(
+    Math.round(
+      value,
+    ),
+    95,
+  )
+}
+
+/*
+ * ==========================================
+ * OPORTUNIDADE REAL
+ * ==========================================
+ */
+
 function isRealOpportunity(
   result: TavilyResult,
 ) {
@@ -287,11 +563,14 @@ function isRealOpportunity(
     result.url.trim()
 
   const title =
-    cleanText(result.title)
+    cleanText(
+      result.title,
+    )
 
   const content =
     cleanText(
-      result.content ?? '',
+      result.content ??
+        '',
     )
 
   if (
@@ -309,7 +588,9 @@ function isRealOpportunity(
   }
 
   if (
-    isBlockedTitle(title)
+    isBlockedTitle(
+      title,
+    )
   ) {
     return false
   }
@@ -325,6 +606,12 @@ function isRealOpportunity(
 
   return true
 }
+
+/*
+ * ==========================================
+ * TAVILY
+ * ==========================================
+ */
 
 async function searchTavily(
   query: string,
@@ -343,29 +630,43 @@ async function searchTavily(
       'https://api.tavily.com/search',
       {
         method: 'POST',
+
         headers: {
           'Content-Type':
             'application/json',
         },
-        body: JSON.stringify({
-          api_key:
-            apiKey,
-          query,
-          search_depth:
-            'advanced',
-          topic: 'general',
-          max_results: 8,
-          include_answer:
-            false,
-          include_raw_content:
-            false,
-        }),
+
+        body:
+          JSON.stringify({
+            api_key:
+              apiKey,
+
+            query,
+
+            search_depth:
+              'advanced',
+
+            topic:
+              'general',
+
+            max_results:
+              8,
+
+            include_answer:
+              false,
+
+            include_raw_content:
+              false,
+          }),
+
         cache:
           'no-store',
       },
     )
 
-  if (!response.ok) {
+  if (
+    !response.ok
+  ) {
     const text =
       await response.text()
 
@@ -374,8 +675,16 @@ async function searchTavily(
     )
   }
 
-  return (await response.json()) as TavilyResponse
+  return (
+    (await response.json()) as TavilyResponse
+  )
 }
+
+/*
+ * ==========================================
+ * SALVAR OPORTUNIDADE
+ * ==========================================
+ */
 
 async function saveOpportunity(
   result: TavilyResult,
@@ -392,23 +701,62 @@ async function saveOpportunity(
   const url =
     result.url!.trim()
 
-  const id =
-    makeId(url)
-
   const title =
     cleanText(
       result.title!,
     )
 
-  const confidence =
-    calculateConfidence(
-      Number(
-        result.score ?? 0,
-      ),
+  const content =
+    cleanText(
+      result.content ??
+        '',
     )
+
+  const id =
+    makeId(url)
 
   const source =
     getSource(url)
+
+  const signup =
+    requiresSignup(
+      title,
+      content,
+    )
+
+  const humanAction =
+    requiresHumanAction(
+      title,
+      content,
+    )
+
+  const paymentSignal =
+    hasPaymentSignal(
+      title,
+      content,
+    )
+
+  const actionSignal =
+    hasActionSignal(
+      title,
+      content,
+    )
+
+  const estimatedValue =
+    extractEstimatedValue(
+      title,
+      content,
+    )
+
+  const confidence =
+    calculateConfidence(
+      Number(
+        result.score ??
+          0,
+      ),
+      actionSignal,
+      paymentSignal,
+    )
 
   await sql`
     INSERT INTO opportunities (
@@ -431,12 +779,12 @@ async function saveOpportunity(
       ${title},
       ${source},
       ${category},
-      0,
+      ${estimatedValue},
       ${confidence},
       'new',
       ${url},
-      TRUE,
-      TRUE,
+      ${signup},
+      ${humanAction || signup},
       'global',
       TRUE,
       NOW()
@@ -446,14 +794,32 @@ async function saveOpportunity(
     DO UPDATE SET
       title =
         EXCLUDED.title,
+
       source =
         EXCLUDED.source,
+
       category =
         EXCLUDED.category,
+
+      estimated_value =
+        CASE
+          WHEN EXCLUDED.estimated_value > 0
+          THEN EXCLUDED.estimated_value
+          ELSE opportunities.estimated_value
+        END,
+
       confidence =
         EXCLUDED.confidence,
+
       url =
         EXCLUDED.url,
+
+      requires_signup =
+        EXCLUDED.requires_signup,
+
+      requires_user_action =
+        EXCLUDED.requires_user_action,
+
       discovered_at =
         NOW()
   `
@@ -462,11 +828,11 @@ async function saveOpportunity(
 }
 
 /*
- * LIMPA O CATÁLOGO ANTIGO.
- *
- * Remove oportunidades que claramente
- * parecem artigos ou conteúdo.
+ * ==========================================
+ * LIMPEZA DE CONTEÚDO ANTIGO
+ * ==========================================
  */
+
 async function cleanOldContent() {
   for (
     const phrase of TITLE_BLOCKLIST
@@ -489,25 +855,40 @@ async function cleanOldContent() {
   }
 }
 
+/*
+ * ==========================================
+ * GET
+ * ==========================================
+ */
+
 export async function GET() {
   try {
     await ensureTable()
 
     /*
-     * Limpa lixo antigo antes
-     * de executar o novo radar.
+     * Remove lixo antigo.
      */
+
     await cleanOldContent()
 
-    let discovered = 0
-    let searches = 0
-    let rejected = 0
+    let discovered =
+      0
 
-    const errors: string[] = []
+    let searches =
+      0
+
+    let rejected =
+      0
+
+    const errors: string[] =
+      []
 
     /*
+     * ======================================
      * PESQUISA GLOBAL
+     * ======================================
      */
+
     for (
       const search of SEARCHES
     ) {
@@ -544,7 +925,9 @@ export async function GET() {
               search.category as Category,
             )
 
-          if (saved) {
+          if (
+            saved
+          ) {
             discovered += 1
           }
         }
@@ -557,14 +940,19 @@ export async function GET() {
         )
 
         errors.push(
-          String(error),
+          String(
+            error,
+          ),
         )
       }
     }
 
     /*
-     * DEVOLVE O CATÁLOGO FINAL.
+     * ======================================
+     * CATÁLOGO FINAL
+     * ======================================
      */
+
     const rows =
       await sql`
         SELECT
@@ -584,14 +972,19 @@ export async function GET() {
           created_at
         FROM opportunities
         ORDER BY
+          confidence DESC,
+          estimated_value DESC,
           discovered_at DESC
         LIMIT 100
       `
 
     const opportunities =
       rows.map(
-        (row) => ({
-          id: row.id,
+        (
+          row,
+        ) => ({
+          id:
+            row.id,
 
           title:
             row.title,
@@ -648,11 +1041,19 @@ export async function GET() {
         }),
       )
 
+    /*
+     * ======================================
+     * RESPOSTA
+     * ======================================
+     */
+
     return NextResponse.json({
-      success: true,
+      success:
+        true,
 
       radar: {
-        active: true,
+        active:
+          true,
 
         engine:
           'Tavily',
@@ -685,6 +1086,12 @@ export async function GET() {
 
         actionRequired:
           true,
+
+        valueExtraction:
+          true,
+
+        duplicateProtection:
+          true,
       },
 
       discovered,
@@ -697,10 +1104,11 @@ export async function GET() {
       opportunities,
 
       message:
-        'Radar V4 executado com filtro de oportunidades acionáveis.',
+        'Radar executado com filtragem, classificação e extração de estimativas das fontes.',
 
       errors:
-        errors.length > 0
+        errors.length >
+        0
           ? errors
           : undefined,
     })
@@ -708,16 +1116,18 @@ export async function GET() {
     error
   ) {
     console.error(
-      'Erro no radar V4:',
+      'Erro no radar:',
       error,
     )
 
     return NextResponse.json(
       {
-        success: false,
+        success:
+          false,
 
         error:
-          error instanceof Error
+          error instanceof
+          Error
             ? error.message
             : 'Erro ao executar radar',
 
@@ -725,7 +1135,8 @@ export async function GET() {
           [],
       },
       {
-        status: 500,
+        status:
+          500,
       },
     )
   }
