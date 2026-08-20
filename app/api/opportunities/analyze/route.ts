@@ -1,192 +1,411 @@
 import { NextResponse } from 'next/server'
 
-type OpportunityInput = {
-  id?: string
+type AnalyzeRequest = {
+  url?: string
   title?: string
   source?: string
   category?: string
-  estimatedValue?: number
-  confidence?: number
-  url?: string | null
-  requiresSignup?: boolean
-  requiresUserAction?: boolean
+  content?: string
 }
 
-const ALLOWED_CATEGORIES = [
-  'microtasks',
-  'freelance',
-  'surveys',
-  'content',
-  'affiliate',
-  'testing',
-] as const
-
-function clean(value: unknown) {
-  return String(value ?? '').trim()
-}
-
-function analyzeOpportunity(
-  opportunity: OpportunityInput,
-) {
-  const title = clean(
-    opportunity.title,
-  )
-
-  const source = clean(
-    opportunity.source,
-  )
-
-  const category = clean(
-    opportunity.category,
-  )
-
-  const url = clean(
-    opportunity.url,
-  )
-
-  const confidence = Math.max(
-    0,
-    Math.min(
-      100,
-      Number(
-        opportunity.confidence ?? 0,
-      ),
-    ),
-  )
-
-  const requiresSignup =
-    Boolean(
-      opportunity.requiresSignup,
-    )
-
-  const requiresUserAction =
-    Boolean(
-      opportunity.requiresUserAction,
-    )
-
-  const categoryAllowed =
-    ALLOWED_CATEGORIES.includes(
-      category as (typeof ALLOWED_CATEGORIES)[number],
-    )
-
-  let priority:
-    | 'high'
-    | 'medium'
-    | 'low' = 'low'
-
-  if (
-    confidence >= 85 &&
-    categoryAllowed &&
-    url
-  ) {
-    priority = 'high'
-  } else if (
-    confidence >= 75 &&
-    categoryAllowed &&
-    url
-  ) {
-    priority = 'medium'
+type AnalysisResult = {
+  valid: boolean
+  classification:
+    | 'real_opportunity'
+    | 'needs_review'
+    | 'content'
+    | 'invalid'
+  confidence: number
+  reasons: string[]
+  signals: {
+    application: boolean
+    signup: boolean
+    payment: boolean
+    work: boolean
+    contentPage: boolean
   }
+}
+
+const CONTENT_WORDS = [
+  'blog',
+  'article',
+  'guide',
+  'guides',
+  'news',
+  'resources',
+  'explained',
+  'how-to',
+  'howto',
+  'tips',
+  'what-is',
+  'what-are',
+  'ultimate-guide',
+]
+
+const CONTENT_PHRASES = [
+  'how to',
+  'what is',
+  'what are',
+  'best ways',
+  'ultimate guide',
+  'everything you need to know',
+  'commission structure',
+  'commission structures',
+  'tips and tricks',
+  'learn more about',
+]
+
+const ACTION_WORDS = [
+  'apply',
+  'apply now',
+  'sign up',
+  'signup',
+  'register',
+  'join',
+  'join now',
+  'create account',
+  'create an account',
+  'become a partner',
+  'become an affiliate',
+  'become a tester',
+  'start earning',
+  'get paid',
+  'paid study',
+  'paid research',
+  'paid survey',
+  'remote job',
+  'freelance job',
+  'work with us',
+]
+
+const PAYMENT_WORDS = [
+  'get paid',
+  'paid',
+  'payment',
+  'payments',
+  'commission',
+  'reward',
+  'rewards',
+  'earn',
+  'earning',
+  'earnings',
+  'cash',
+  'payout',
+]
+
+const WORK_WORDS = [
+  'job',
+  'jobs',
+  'work',
+  'worker',
+  'workers',
+  'freelance',
+  'task',
+  'tasks',
+  'microtask',
+  'microtasks',
+  'study',
+  'research',
+  'survey',
+  'surveys',
+  'tester',
+  'testing',
+  'affiliate',
+  'partner',
+]
+
+function normalize(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function containsAny(
+  text: string,
+  words: string[],
+) {
+  return words.some((word) =>
+    text.includes(word),
+  )
+}
+
+function isContentPage(
+  url: string,
+  title: string,
+) {
+  const normalizedUrl =
+    normalize(url)
+
+  const normalizedTitle =
+    normalize(title)
+
+  return (
+    containsAny(
+      normalizedUrl,
+      CONTENT_WORDS,
+    ) ||
+    containsAny(
+      normalizedTitle,
+      CONTENT_PHRASES,
+    )
+  )
+}
+
+function analyzeText(
+  url: string,
+  title: string,
+  content: string,
+): AnalysisResult {
+  const text = normalize(
+    `${title} ${content}`,
+  )
+
+  const contentPage =
+    isContentPage(
+      url,
+      title,
+    )
+
+  const application =
+    containsAny(
+      text,
+      [
+        'apply',
+        'apply now',
+        'register',
+        'join',
+        'become a tester',
+        'become an affiliate',
+        'become a partner',
+      ],
+    )
+
+  const signup =
+    containsAny(
+      text,
+      [
+        'sign up',
+        'signup',
+        'create account',
+        'create an account',
+        'register',
+      ],
+    )
+
+  const payment =
+    containsAny(
+      text,
+      PAYMENT_WORDS,
+    )
+
+  const work =
+    containsAny(
+      text,
+      WORK_WORDS,
+    )
 
   const reasons: string[] = []
 
-  if (categoryAllowed) {
+  if (application) {
     reasons.push(
-      'Categoria reconhecida pelo radar.',
-    )
-  } else {
-    reasons.push(
-      'Categoria não reconhecida pelo catálogo atual.',
+      'Possui sinal de candidatura ou inscrição.',
     )
   }
 
-  if (url) {
+  if (signup) {
     reasons.push(
-      'Possui endereço para continuar a análise.',
-    )
-  } else {
-    reasons.push(
-      'Não possui URL disponível.',
+      'Possui sinal de cadastro.',
     )
   }
 
-  if (requiresSignup) {
+  if (payment) {
     reasons.push(
-      'Pode exigir cadastro do usuário.',
+      'Possui sinais relacionados a pagamento ou recompensa.',
     )
   }
 
-  if (requiresUserAction) {
+  if (work) {
     reasons.push(
-      'Exige ação humana e não deve ser executada fingindo identidade.',
+      'Possui sinais relacionados a trabalho ou atividade remunerada.',
     )
   }
 
-  const automatedPreparation =
-    categoryAllowed &&
-    Boolean(url)
+  if (contentPage) {
+    reasons.push(
+      'A URL ou o título parece indicar conteúdo informativo.',
+    )
+  }
 
-  const manualActionRequired =
-    requiresUserAction ||
-    requiresSignup
+  /*
+   * CONTEÚDO PURO
+   *
+   * Se parece artigo e não possui
+   * sinais fortes de ação, rejeita.
+   */
+  if (
+    contentPage &&
+    !application &&
+    !signup
+  ) {
+    return {
+      valid: false,
+      classification:
+        'content',
+      confidence: 95,
+      reasons,
+      signals: {
+        application,
+        signup,
+        payment,
+        work,
+        contentPage,
+      },
+    }
+  }
 
+  /*
+   * OPORTUNIDADE FORTE
+   *
+   * Precisa existir ação + sinais
+   * de pagamento/trabalho.
+   */
+  if (
+    (application || signup) &&
+    (payment || work) &&
+    !contentPage
+  ) {
+    return {
+      valid: true,
+      classification:
+        'real_opportunity',
+      confidence: 90,
+      reasons,
+      signals: {
+        application,
+        signup,
+        payment,
+        work,
+        contentPage,
+      },
+    }
+  }
+
+  /*
+   * POSSÍVEL OPORTUNIDADE
+   */
+  if (
+    (payment || work) &&
+    (application ||
+      signup ||
+      !contentPage)
+  ) {
+    return {
+      valid: true,
+      classification:
+        'needs_review',
+      confidence: 70,
+      reasons,
+      signals: {
+        application,
+        signup,
+        payment,
+        work,
+        contentPage,
+      },
+    }
+  }
+
+  /*
+   * NÃO TEM SINAIS SUFICIENTES.
+   */
   return {
-    id:
-      opportunity.id ?? null,
-
-    title,
-
-    source,
-
-    category,
-
-    priority,
-
-    confidence,
-
-    url:
-      url || null,
-
-    requiresSignup,
-
-    requiresUserAction,
-
-    automatedPreparation,
-
-    manualActionRequired,
-
-    estimatedValueIsMoney:
-      false,
-
-    paymentConfirmed:
-      false,
-
-    canRegisterEarning:
-      false,
-
-    reasons,
-
-    nextAction:
-      manualActionRequired
-        ? 'Encaminhar o usuário para a fonte oficial e aguardar a ação humana.'
-        : 'Preparar a oportunidade para análise posterior.',
-
-    safety: {
-      usesPassword:
-        false,
-
-      usesCpf:
-        false,
-
-      usesCard:
-        false,
-
-      usesTwoFactorCode:
-        false,
-
-      impersonatesUser:
-        false,
+    valid: false,
+    classification:
+      'invalid',
+    confidence: 40,
+    reasons: [
+      ...reasons,
+      'Não foram encontrados sinais suficientes de uma oportunidade acionável.',
+    ],
+    signals: {
+      application,
+      signup,
+      payment,
+      work,
+      contentPage,
     },
+  }
+}
+
+async function inspectPage(
+  url: string,
+) {
+  try {
+    const response =
+      await fetch(url, {
+        method: 'GET',
+        redirect: 'follow',
+        cache: 'no-store',
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 Gerente-de-Renda Opportunity Analyzer',
+        },
+      })
+
+    if (!response.ok) {
+      return ''
+    }
+
+    const contentType =
+      response.headers.get(
+        'content-type',
+      ) ?? ''
+
+    if (
+      !contentType.includes(
+        'text/html',
+      )
+    ) {
+      return ''
+    }
+
+    const html =
+      await response.text()
+
+    /*
+     * Remove scripts e estilos.
+     */
+    const text =
+      html
+        .replace(
+          /<script[\s\S]*?<\/script>/gi,
+          ' ',
+        )
+        .replace(
+          /<style[\s\S]*?<\/style>/gi,
+          ' ',
+        )
+        .replace(
+          /<[^>]+>/g,
+          ' ',
+        )
+        .replace(
+          /\s+/g,
+          ' ',
+        )
+        .trim()
+
+    /*
+     * Limita o tamanho para
+     * evitar processamento excessivo.
+     */
+    return text.slice(
+      0,
+      30000,
+    )
+  } catch {
+    return ''
   }
 }
 
@@ -195,17 +414,21 @@ export async function POST(
 ) {
   try {
     const body =
-      (await request.json()) as OpportunityInput
+      (await request.json()) as AnalyzeRequest
 
-    if (
-      !body ||
-      typeof body !== 'object'
-    ) {
+    const url =
+      body.url?.trim()
+
+    const title =
+      body.title?.trim() ??
+      ''
+
+    if (!url) {
       return NextResponse.json(
         {
           success: false,
           error:
-            'Oportunidade inválida.',
+            'URL da oportunidade não informada.',
         },
         {
           status: 400,
@@ -213,37 +436,73 @@ export async function POST(
       )
     }
 
-    const analysis =
-      analyzeOpportunity(body)
+    /*
+     * Verificação básica da URL.
+     */
+    try {
+      new URL(url)
+    } catch {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'URL inválida.',
+        },
+        {
+          status: 400,
+        },
+      )
+    }
+
+    /*
+     * Primeiro usa o conteúdo já
+     * encontrado pelo radar.
+     */
+    let pageContent =
+      body.content?.trim() ??
+      ''
+
+    /*
+     * Depois tenta consultar a
+     * página oficial.
+     */
+    if (
+      pageContent.length <
+      100
+    ) {
+      pageContent =
+        await inspectPage(
+          url,
+        )
+    }
+
+    const result =
+      analyzeText(
+        url,
+        title,
+        pageContent,
+      )
 
     return NextResponse.json({
       success: true,
 
-      analysis,
-
-      rules: {
-        opportunityIsNotMoney:
-          true,
-
-        estimatedValuesAreNotMoney:
-          true,
-
-        onlyConfirmedEarnings:
-          true,
-
-        identityActionsRequireUser:
-          true,
-
-        automaticSignup:
-          false,
-
-        automaticIdentityUse:
-          false,
+      opportunity: {
+        url,
+        title,
+        source:
+          body.source ??
+          null,
+        category:
+          body.category ??
+          null,
       },
+
+      analysis:
+        result,
     })
   } catch (error) {
     console.error(
-      'Erro ao analisar oportunidade:',
+      'Erro no analisador de oportunidades:',
       error,
     )
 
@@ -251,7 +510,9 @@ export async function POST(
       {
         success: false,
         error:
-          'Não foi possível analisar a oportunidade.',
+          error instanceof Error
+            ? error.message
+            : 'Erro ao analisar oportunidade.',
       },
       {
         status: 500,
