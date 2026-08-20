@@ -18,60 +18,96 @@ export type OpportunityStatus =
   | 'done'
   | 'pending'
 
+/*
+ * ==========================================
+ * STATUS DA PREPARAÇÃO
+ * ==========================================
+ *
+ * A preparação pode acontecer antes
+ * da intervenção do usuário.
+ *
+ * Nunca significa que o pagamento
+ * foi recebido.
+ */
+export type PreparationStatus =
+  | 'not_started'
+  | 'preparing'
+  | 'ready'
+  | 'requires_user'
+  | 'completed'
+  | 'failed'
+
 export interface Opportunity {
   id: string
+
   title: string
+
   source: string
+
   category: OpportunityCategory
 
   /*
    * Valor estimado.
    *
-   * IMPORTANTE:
-   * Não representa dinheiro recebido.
+   * NÃO representa dinheiro recebido.
    */
   estimatedValue: number
 
+  /*
+   * Confiança do radar.
+   */
   confidence: number // 0-100
 
   status: OpportunityStatus
 
   /*
-   * Endereço da oportunidade real.
-   *
-   * Exemplo:
-   * https://www.prolific.com/...
-   *
-   * O sistema pode usar essa URL
-   * para encaminhar o usuário à fonte.
+   * URL oficial da oportunidade.
    */
   url?: string | null
 
   /*
-   * Indica se o usuário precisa
-   * criar uma conta antes de continuar.
+   * Indica se normalmente existe
+   * necessidade de cadastro.
    */
   requiresSignup?: boolean
 
   /*
-   * Indica que a oportunidade
-   * exige uma ação humana.
+   * Indica se existe alguma etapa
+   * que precisa da intervenção do usuário.
    *
-   * Isso evita o sistema fingir
-   * que executou uma tarefa.
+   * Exemplos:
+   * - CAPTCHA
+   * - confirmação de identidade
+   * - aprovação
+   * - autenticação
+   * - decisão que não pode ser automatizada
    */
   requiresUserAction?: boolean
 
-  discoveredAt: string // ISO
+  /*
+   * Indica se o sistema pode preparar
+   * automaticamente o fluxo.
+   *
+   * Isso NÃO significa que ele pode
+   * concluir qualquer etapa sozinho.
+   */
+  automatedPreparation?: boolean
 
   /*
-   * Data de criação no banco.
-   *
-   * Opcional para manter compatibilidade
-   * com oportunidades antigas.
+   * Estado atual da preparação.
    */
+  preparationStatus?: PreparationStatus
+
+  discoveredAt: string // ISO
+
   createdAt?: string
 }
+
+/*
+ * ==========================================
+ * TAREFAS
+ * ==========================================
+ */
 
 export type TaskState =
   | 'running'
@@ -80,12 +116,21 @@ export type TaskState =
 
 export interface Task {
   id: string
+
+  /*
+   * Liga a tarefa à oportunidade
+   * original.
+   */
+  opportunityId?: string
+
   title: string
+
   source: string
+
   state: TaskState
 
   /*
-   * Valor estimado da tarefa.
+   * Valor estimado.
    *
    * NÃO é dinheiro confirmado.
    */
@@ -96,16 +141,50 @@ export interface Task {
   startedAt: string // ISO
 
   /*
-   * Present when state === 'pending'
+   * URL da oportunidade.
+   */
+  actionUrl?: string
+
+  /*
+   * Cadastro necessário.
+   */
+  requiresSignup?: boolean
+
+  /*
+   * Ação humana necessária.
+   */
+  requiresUserAction?: boolean
+
+  /*
+   * Estado da preparação.
+   */
+  preparationStatus?: PreparationStatus
+
+  /*
+   * Motivo pelo qual a tarefa
+   * precisa de intervenção.
    */
   pendingReason?: string
 
   /*
-   * URL para ação humana,
-   * quando necessário.
+   * URL específica para a ação
+   * que precisa ser feita pelo usuário.
    */
-  actionUrl?: string
+  pendingActionUrl?: string
+
+  /*
+   * Indica que a tarefa foi preparada
+   * pelo sistema, mas ainda não significa
+   * que foi concluída ou paga.
+   */
+  prepared?: boolean
 }
+
+/*
+ * ==========================================
+ * ATIVIDADES
+ * ==========================================
+ */
 
 export type ActivityKind =
   | 'discovery'
@@ -118,49 +197,64 @@ export type ActivityKind =
 
 export interface ActivityEvent {
   id: string
+
   kind: ActivityKind
+
   message: string
+
   amount?: number
+
   at: string // ISO
 
-  /**
-   * true quando o evento provém
-   * da simulação.
-   *
-   * Eventos reais devem ser false
-   * ou não possuir este campo.
+  /*
+   * true somente para demonstrações/simulações.
    */
   demo?: boolean
 }
 
+/*
+ * ==========================================
+ * TRANSAÇÕES
+ * ==========================================
+ */
+
 export interface Transaction {
   id: string
+
   description: string
+
   source: string
+
   amount: number
+
   at: string // ISO
 
   /*
-   * Somente 'confirmed' deve
-   * representar dinheiro recebido.
+   * Somente confirmed representa
+   * dinheiro efetivamente confirmado.
    */
   status:
     | 'confirmed'
     | 'processing'
 
-  /**
-   * true quando a entrada provém
-   * da simulação.
-   *
-   * Nunca deve ser tratada como
-   * dinheiro real.
+  /*
+   * true somente para demonstração.
    */
   demo?: boolean
 }
 
+/*
+ * ==========================================
+ * INTEGRAÇÕES
+ * ==========================================
+ */
+
 export interface Integration {
   key: string
+
   name: string
+
   description: string
+
   connected: boolean
 }
