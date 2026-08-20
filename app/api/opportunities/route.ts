@@ -4,37 +4,100 @@ import { sql } from '@/lib/db'
 /*
  * API DE OPORTUNIDADES
  *
- * Oportunidade NÃO significa dinheiro recebido.
- * Os valores cadastrados são apenas estimativas.
- *
- * O saldo financeiro continua sendo controlado
- * exclusivamente pela API /api/earnings.
+ * IMPORTANTE:
+ * - Oportunidade não é dinheiro recebido.
+ * - estimatedValue é apenas estimativa.
+ * - O saldo real é controlado por /api/earnings.
+ * - A URL serve para encaminhar o usuário à fonte.
+ * - O sistema não usa senha, CPF, cartão ou 2FA.
  */
 
-export async function GET() {
-  try {
-    await sql`
-      CREATE TABLE IF NOT EXISTS opportunities (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        source TEXT NOT NULL,
-        category TEXT NOT NULL,
-        estimated_value NUMERIC(12,2) NOT NULL DEFAULT 0,
-        confidence INTEGER NOT NULL DEFAULT 0,
-        status TEXT NOT NULL DEFAULT 'new',
-        discovered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `
+const SOURCES = [
+  {
+    id: 'source-prolific',
+    title: 'Prolific — estudos pagos',
+    source: 'Prolific',
+    category: 'surveys',
+    confidence: 95,
+    url: 'https://www.prolific.com/participants-join-us',
+    requiresSignup: true,
+    requiresUserAction: true,
+  },
+  {
+    id: 'source-usertesting',
+    title:
+      'UserTesting — testes de sites e aplicativos',
+    source: 'UserTesting',
+    category: 'testing',
+    confidence: 95,
+    url:
+      'https://www.usertesting.com/get-paid-to-test',
+    requiresSignup: true,
+    requiresUserAction: true,
+  },
+  {
+    id: 'source-clickworker',
+    title: 'Clickworker — microtarefas',
+    source: 'Clickworker',
+    category: 'microtasks',
+    confidence: 90,
+    url:
+      'https://www.clickworker.com/clickworker/',
+    requiresSignup: true,
+    requiresUserAction: true,
+  },
+  {
+    id: 'source-fiverr',
+    title: 'Fiverr — vender serviços',
+    source: 'Fiverr',
+    category: 'freelance',
+    confidence: 90,
+    url: 'https://www.fiverr.com/',
+    requiresSignup: true,
+    requiresUserAction: true,
+  },
+]
 
-    /*
-     * FONTES INICIAIS
-     *
-     * O valor é 0 porque nenhuma renda
-     * foi confirmada ainda.
-     *
-     * ON CONFLICT impede duplicação.
-     */
+async function ensureTable() {
+  await sql`
+    CREATE TABLE IF NOT EXISTS opportunities (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      source TEXT NOT NULL,
+      category TEXT NOT NULL,
+      estimated_value NUMERIC(12,2) NOT NULL DEFAULT 0,
+      confidence INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'new',
+      url TEXT,
+      requires_signup BOOLEAN NOT NULL DEFAULT TRUE,
+      requires_user_action BOOLEAN NOT NULL DEFAULT TRUE,
+      discovered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `
+
+  /*
+   * Compatibilidade com bancos criados
+   * pela versão anterior.
+   */
+  await sql`
+    ALTER TABLE opportunities
+    ADD COLUMN IF NOT EXISTS url TEXT
+  `
+
+  await sql`
+    ALTER TABLE opportunities
+    ADD COLUMN IF NOT EXISTS requires_signup BOOLEAN NOT NULL DEFAULT TRUE
+  `
+
+  await sql`
+    ALTER TABLE opportunities
+    ADD COLUMN IF NOT EXISTS requires_user_action BOOLEAN NOT NULL DEFAULT TRUE
+  `
+}
+
+async function seedSources() {
+  for (const opportunity of SOURCES) {
     await sql`
       INSERT INTO opportunities (
         id,
@@ -43,47 +106,85 @@ export async function GET() {
         category,
         estimated_value,
         confidence,
-        status
+        status,
+        url,
+        requires_signup,
+        requires_user_action,
+        discovered_at
       )
-      VALUES
-        (
-          'source-prolific',
-          'Prolific — estudos pagos',
-          'Prolific',
-          'surveys',
-          0,
-          95,
-          'new'
-        ),
-        (
-          'source-usertesting',
-          'UserTesting — testes de sites e aplicativos',
-          'UserTesting',
-          'testing',
-          0,
-          95,
-          'new'
-        ),
-        (
-          'source-clickworker',
-          'Clickworker — microtarefas',
-          'Clickworker',
-          'microtasks',
-          0,
-          95,
-          'new'
-        ),
-        (
-          'source-fiverr',
-          'Fiverr — vender serviços',
-          'Fiverr',
-          'freelance',
-          0,
-          95,
-          'new'
-        )
-      ON CONFLICT (id) DO NOTHING
+      VALUES (
+        ${opportunity.id},
+        ${opportunity.title},
+        ${opportunity.source},
+        ${opportunity.category},
+        0,
+        ${opportunity.confidence},
+        'new',
+        ${opportunity.url},
+        ${opportunity.requiresSignup},
+        ${opportunity.requiresUserAction},
+        NOW()
+      )
+      ON CONFLICT (id)
+      DO UPDATE SET
+        title = EXCLUDED.title,
+        source = EXCLUDED.source,
+        category = EXCLUDED.category,
+        confidence = EXCLUDED.confidence,
+        url = EXCLUDED.url,
+        requires_signup = EXCLUDED.requires_signup,
+        requires_user_action = EXCLUDED.requires_user_action
     `
+  }
+}
+
+function normalizeOpportunity(row: any) {
+  return {
+    id: row.id,
+    title: row.title,
+    source: row.source,
+    category: row.category,
+
+    /*
+     * Nunca confundir estimativa
+     * com dinheiro recebido.
+     */
+    estimatedValue: Number(
+      row.estimated_value ?? 0,
+    ),
+
+    confidence: Number(
+      row.confidence ?? 0,
+    ),
+
+    status: row.status,
+
+    url: row.url ?? null,
+
+    requiresSignup:
+      Boolean(row.requires_signup),
+
+    requiresUserAction:
+      Boolean(row.requires_user_action),
+
+    discoveredAt:
+      row.discovered_at,
+
+    createdAt:
+      row.created_at,
+  }
+}
+
+/*
+ * GET
+ *
+ * Carrega as oportunidades disponíveis
+ * para o painel.
+ */
+export async function GET() {
+  try {
+    await ensureTable()
+    await seedSources()
 
     const rows = await sql`
       SELECT
@@ -94,6 +195,9 @@ export async function GET() {
         estimated_value,
         confidence,
         status,
+        url,
+        requires_signup,
+        requires_user_action,
         discovered_at,
         created_at
       FROM opportunities
@@ -101,21 +205,8 @@ export async function GET() {
       LIMIT 100
     `
 
-    const opportunities = rows.map((row) => ({
-      id: row.id,
-      title: row.title,
-      source: row.source,
-      category: row.category,
-      estimatedValue: Number(
-        row.estimated_value ?? 0,
-      ),
-      confidence: Number(
-        row.confidence ?? 0,
-      ),
-      status: row.status,
-      discoveredAt: row.discovered_at,
-      createdAt: row.created_at,
-    }))
+    const opportunities =
+      rows.map(normalizeOpportunity)
 
     return NextResponse.json({
       success: true,
@@ -131,7 +222,8 @@ export async function GET() {
     return NextResponse.json(
       {
         success: false,
-        error: 'Erro ao consultar oportunidades',
+        error:
+          'Erro ao consultar oportunidades',
         opportunities: [],
       },
       {
@@ -141,11 +233,18 @@ export async function GET() {
   }
 }
 
+/*
+ * POST
+ *
+ * Permite cadastrar uma nova oportunidade
+ * sem transformar isso em ganho financeiro.
+ */
 export async function POST(
   request: Request,
 ) {
   try {
-    const body = await request.json()
+    const body =
+      await request.json()
 
     const {
       id,
@@ -154,6 +253,9 @@ export async function POST(
       category,
       estimatedValue,
       confidence,
+      url,
+      requiresSignup,
+      requiresUserAction,
     } = body
 
     if (
@@ -174,13 +276,15 @@ export async function POST(
       )
     }
 
-    const value = Number(
-      estimatedValue ?? 0,
-    )
+    const value =
+      Number(
+        estimatedValue ?? 0,
+      )
 
-    const confidenceValue = Number(
-      confidence ?? 0,
-    )
+    const confidenceValue =
+      Number(
+        confidence ?? 0,
+      )
 
     if (
       !Number.isFinite(value) ||
@@ -217,19 +321,7 @@ export async function POST(
       )
     }
 
-    await sql`
-      CREATE TABLE IF NOT EXISTS opportunities (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        source TEXT NOT NULL,
-        category TEXT NOT NULL,
-        estimated_value NUMERIC(12,2) NOT NULL DEFAULT 0,
-        confidence INTEGER NOT NULL DEFAULT 0,
-        status TEXT NOT NULL DEFAULT 'new',
-        discovered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      )
-    `
+    await ensureTable()
 
     const result = await sql`
       INSERT INTO opportunities (
@@ -239,18 +331,43 @@ export async function POST(
         category,
         estimated_value,
         confidence,
-        status
+        status,
+        url,
+        requires_signup,
+        requires_user_action
       )
       VALUES (
         ${id},
         ${title},
         ${source},
         ${category},
-        ${Number(value.toFixed(2))},
+        ${Number(
+          value.toFixed(2),
+        )},
         ${confidenceValue},
-        'new'
+        'new',
+        ${url ?? null},
+        ${Boolean(
+          requiresSignup ?? true,
+        )},
+        ${Boolean(
+          requiresUserAction ?? true,
+        )}
       )
-      ON CONFLICT (id) DO NOTHING
+      ON CONFLICT (id)
+      DO UPDATE SET
+        title = EXCLUDED.title,
+        source = EXCLUDED.source,
+        category = EXCLUDED.category,
+        estimated_value =
+          EXCLUDED.estimated_value,
+        confidence =
+          EXCLUDED.confidence,
+        url = EXCLUDED.url,
+        requires_signup =
+          EXCLUDED.requires_signup,
+        requires_user_action =
+          EXCLUDED.requires_user_action
       RETURNING
         id,
         title,
@@ -259,32 +376,21 @@ export async function POST(
         estimated_value,
         confidence,
         status,
+        url,
+        requires_signup,
+        requires_user_action,
         discovered_at,
         created_at
     `
 
     return NextResponse.json({
       success: true,
-      inserted: result.length > 0,
+      inserted: true,
       opportunity:
         result.length > 0
-          ? {
-              id: result[0].id,
-              title: result[0].title,
-              source: result[0].source,
-              category: result[0].category,
-              estimatedValue: Number(
-                result[0].estimated_value ?? 0,
-              ),
-              confidence: Number(
-                result[0].confidence ?? 0,
-              ),
-              status: result[0].status,
-              discoveredAt:
-                result[0].discovered_at,
-              createdAt:
-                result[0].created_at,
-            }
+          ? normalizeOpportunity(
+              result[0],
+            )
           : null,
     })
   } catch (error) {
