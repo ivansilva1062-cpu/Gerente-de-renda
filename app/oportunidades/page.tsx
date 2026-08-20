@@ -1,126 +1,102 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { RefreshCw } from 'lucide-react'
 
-type Opportunity = {
-  id: string
-  title: string
-  source: string
-  category: string
-  estimatedValue: number
-  confidence: number
-  status: string
-  discoveredAt: string
-  createdAt: string
-}
+import { OpportunityItem } from '@/components/opportunity-item'
+import { useAgent } from '@/components/agent-provider'
 
 export default function OportunidadesPage() {
-  const [opportunities, setOpportunities] = useState<Opportunity[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    async function loadOpportunities() {
-      try {
-        const response = await fetch('/api/opportunities')
-
-        if (!response.ok) {
-          throw new Error('Erro ao carregar oportunidades')
-        }
-
-        const data = await response.json()
-
-        if (!data.success) {
-          throw new Error(
-            data.error || 'Erro ao carregar oportunidades',
-          )
-        }
-
-        setOpportunities(data.opportunities || [])
-      } catch (err) {
-        console.error(err)
-        setError('Não foi possível carregar as oportunidades.')
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    loadOpportunities()
-  }, [])
+  const {
+    opportunities,
+    refreshOpportunities,
+  } = useAgent()
 
   return (
-    <main
-      style={{
-        minHeight: '100vh',
-        padding: '32px',
-        background: '#f5f5f5',
-        color: '#171717',
-      }}
-    >
-      <h1>Oportunidades</h1>
+    <main className="min-h-screen bg-background text-foreground">
+      <div className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
 
-      <p>
-        Fontes de renda e oportunidades encontradas pelo sistema.
-      </p>
+        {/* CABEÇALHO */}
+        <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h1 className="text-3xl font-semibold tracking-tight">
+              Oportunidades
+            </h1>
 
-      {loading && <p>Carregando oportunidades...</p>}
-
-      {error && (
-        <p style={{ color: 'red' }}>
-          {error}
-        </p>
-      )}
-
-      {!loading && !error && (
-        <section
-          style={{
-            display: 'grid',
-            gap: '16px',
-            marginTop: '24px',
-          }}
-        >
-          {opportunities.map((opportunity) => (
-            <article
-              key={opportunity.id}
-              style={{
-                background: '#fff',
-                borderRadius: '12px',
-                padding: '20px',
-                border: '1px solid #ddd',
-              }}
-            >
-              <h2>{opportunity.title}</h2>
-
-              <p>
-                Fonte: {opportunity.source}
-              </p>
-
-              <p>
-                Categoria: {opportunity.category}
-              </p>
-
-              <p>
-                Valor estimado: US${' '}
-                {opportunity.estimatedValue.toFixed(2)}
-              </p>
-
-              <p>
-                Confiança: {opportunity.confidence}%
-              </p>
-
-              <p>
-                Status: {opportunity.status}
-              </p>
-            </article>
-          ))}
-
-          {opportunities.length === 0 && (
-            <p>
-              Nenhuma oportunidade cadastrada.
+            <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
+              Fontes de renda e oportunidades encontradas pelo
+              sistema. Os valores exibidos são estimativas e não
+              representam dinheiro recebido.
             </p>
-          )}
-        </section>
-      )}
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void refreshOpportunities()}
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-border bg-card px-4 py-2 text-sm font-medium transition hover:bg-muted"
+          >
+            <RefreshCw className="size-4" />
+            Atualizar
+          </button>
+        </div>
+
+        {/* RESUMO */}
+        <div className="mb-6 rounded-xl border border-border bg-card p-5">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm text-muted-foreground">
+                Oportunidades encontradas
+              </p>
+
+              <p className="mt-1 font-mono text-3xl font-semibold tabular-nums">
+                {opportunities.length}
+              </p>
+            </div>
+
+            <div className="text-right">
+              <p className="text-xs text-muted-foreground">
+                Importante
+              </p>
+
+              <p className="mt-1 text-sm text-muted-foreground">
+                Nenhuma estimativa altera o saldo.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* LISTA */}
+        {opportunities.length > 0 ? (
+          <section className="grid gap-4">
+            {opportunities.map((opportunity) => (
+              <OpportunityItem
+                key={opportunity.id}
+                opportunity={opportunity}
+              />
+            ))}
+          </section>
+        ) : (
+          <section className="rounded-xl border border-border bg-card p-8 text-center">
+            <h2 className="text-lg font-medium">
+              Nenhuma oportunidade encontrada
+            </h2>
+
+            <p className="mt-2 text-sm text-muted-foreground">
+              Toque em Atualizar para consultar novamente as
+              oportunidades disponíveis.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => void refreshOpportunities()}
+              className="mt-5 inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90"
+            >
+              <RefreshCw className="size-4" />
+              Procurar oportunidades
+            </button>
+          </section>
+        )}
+
+      </div>
     </main>
   )
 }
