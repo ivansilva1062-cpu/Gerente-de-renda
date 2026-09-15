@@ -290,20 +290,7 @@ async function inspectOpportunity(
     })
 
   const session =
-    await bb.sessions.create({
-      timeout: 60,
-
-      userMetadata: {
-        opportunityId:
-          opportunity.id,
-
-        category:
-          opportunity.category,
-
-        worker:
-          'gerente-de-renda',
-      },
-    })
+    await bb.sessions.create()
 
   let browser:
     Awaited<

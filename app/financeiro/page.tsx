@@ -263,7 +263,7 @@ export default function FinancialPage() {
   const series =
     useMemo(() => {
       const result: {
-        date: string
+        day: string
         amount: number
       }[] = []
 
@@ -320,8 +320,14 @@ export default function FinancialPage() {
             )
 
         result.push({
-          date:
-            date.toISOString(),
+          day:
+            date.toLocaleDateString(
+              'pt-BR',
+              {
+                day: '2-digit',
+                month: '2-digit',
+              },
+            ),
           amount,
         })
       }

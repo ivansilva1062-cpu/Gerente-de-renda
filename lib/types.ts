@@ -1,3 +1,5 @@
+import type { ModuleResult } from '@/lib/manager-modules'
+
 export type AgentStatus =
   | 'working'
   | 'waiting'
@@ -116,6 +118,16 @@ export type TaskState =
 
 export interface Task {
   id: string
+
+  /*
+   * Resultados do módulo do gerente
+   * para esta oportunidade.
+   *
+   * Não substitui o cérebro atual;
+   * apenas registra a validação
+   * adicional do gerente.
+   */
+  managerModules?: ModuleResult[]
 
   /*
    * Liga a tarefa à oportunidade

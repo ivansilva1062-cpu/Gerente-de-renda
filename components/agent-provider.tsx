@@ -23,6 +23,9 @@ import {
   DAILY_GOAL,
   seedIntegrations,
 } from '@/lib/mock-data'
+import {
+  runManagerModules,
+} from '@/lib/manager-modules'
 
 interface AgentContextValue {
   status: AgentStatus
@@ -70,6 +73,22 @@ const uid = () =>
   Math.random()
     .toString(36)
     .slice(2, 10)
+
+const evaluateManagerModules = (
+  opportunity: Pick<
+    Opportunity,
+    'title' | 'url' | 'source' | 'category' | 'estimatedValue'
+  >,
+) =>
+  runManagerModules({
+    title: opportunity.title,
+    url: opportunity.url ?? '',
+    description: `${opportunity.source} ${opportunity.category}`,
+    estimatedValue:
+      Number(
+        opportunity.estimatedValue ?? 0,
+      ),
+  })
 
 type DatabaseEarning = {
   id: string
@@ -1036,6 +1055,17 @@ export function AgentProvider({
         const taskId =
           uid()
 
+        const managerModules =
+          evaluateManagerModules(
+            opportunity,
+          )
+
+        const failedModules =
+          managerModules.filter(
+            (result) =>
+              !result.approved,
+          )
+
         const task:
           Task = {
           id:
@@ -1046,6 +1076,8 @@ export function AgentProvider({
 
           source:
             opportunity.source,
+
+          managerModules,
 
           state:
             'running',
@@ -1065,6 +1097,23 @@ export function AgentProvider({
           actionUrl:
             opportunity.url ??
             undefined,
+        }
+
+        if (
+          failedModules.length > 0
+        ) {
+          pushActivity({
+            kind:
+              'system',
+
+            message:
+              `Validação do gerente: ${failedModules
+                .map(
+                  (result) =>
+                    `${result.module} — ${result.reason}`,
+                )
+                .join('; ')}`,
+          })
         }
 
         /*
@@ -1114,6 +1163,7 @@ export function AgentProvider({
         })
       },
       [
+        evaluateManagerModules,
         opportunities,
         processOpportunity,
         pushActivity,
