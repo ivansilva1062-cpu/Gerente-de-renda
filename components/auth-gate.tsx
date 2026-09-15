@@ -9,6 +9,10 @@ import { Button } from '@/components/ui/button'
 type AuthStatus = {
   configured: boolean
   authenticated: boolean
+  session?: {
+    active: boolean
+    idleTimeoutSeconds: number
+  }
 }
 
 async function authRequest(action: string, response?: unknown) {
@@ -38,6 +42,45 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void refresh().catch((reason: unknown) => setError(reason instanceof Error ? reason.message : 'Não foi possível consultar a autenticação.'))
   }, [])
+
+  useEffect(() => {
+    if (!status?.authenticated) return
+
+    let lastActivity = Date.now()
+    let lastHeartbeat = Date.now()
+    let locking = false
+    let timer: ReturnType<typeof setInterval> | undefined
+    const markActivity = () => {
+      lastActivity = Date.now()
+    }
+    const lock = async () => {
+      if (locking) return
+      locking = true
+      await authRequest('block').catch(() => undefined)
+      setStatus((current) => current ? { ...current, authenticated: false, session: current.session ? { ...current.session, active: false } : current.session } : current)
+    }
+
+    const timeout = (status.session?.idleTimeoutSeconds ?? 900) * 1000
+    window.addEventListener('pointerdown', markActivity, { passive: true })
+    window.addEventListener('keydown', markActivity, { passive: true })
+    window.addEventListener('touchstart', markActivity, { passive: true })
+    timer = setInterval(() => {
+      const now = Date.now()
+      if (now - lastActivity >= timeout) {
+        void lock()
+      } else if (now - lastHeartbeat >= 60_000) {
+        lastHeartbeat = now
+        void authRequest('heartbeat').catch(() => lock())
+      }
+    }, 15_000)
+
+    return () => {
+      window.removeEventListener('pointerdown', markActivity)
+      window.removeEventListener('keydown', markActivity)
+      window.removeEventListener('touchstart', markActivity)
+      if (timer) clearInterval(timer)
+    }
+  }, [status?.authenticated, status?.session?.idleTimeoutSeconds])
 
   async function register() {
     setBusy(true)

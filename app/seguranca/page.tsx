@@ -1,5 +1,7 @@
 'use client'
 
+import { useEffect, useState } from 'react'
+
 import {
   ShieldCheck,
   Lock,
@@ -7,6 +9,7 @@ import {
   MonitorSmartphone,
   Server,
   Eye,
+  Clock3,
   type LucideIcon,
 } from 'lucide-react'
 import { PageHeader } from '@/components/page-header'
@@ -25,8 +28,8 @@ const items: SecurityItem[] = [
   {
     icon: KeyRound,
     title: 'Autenticação de acesso',
-    description: 'Login privado por e-mail e senha para proteger o painel.',
-    status: 'planned',
+    description: 'Passkey protegida pelo autenticador do dispositivo, com Face ID ou Touch ID quando disponível.',
+    status: 'ready',
   },
   {
     icon: Lock,
@@ -61,12 +64,97 @@ const statusMeta = {
 }
 
 export default function SecurityPage() {
+  const [session, setSession] = useState<{
+    active: boolean
+    idleTimeoutSeconds: number
+    lastSeenAt?: string | null
+    expiresAt?: string | null
+  } | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    fetch('/api/auth', { cache: 'no-store', credentials: 'same-origin' })
+      .then((response) => response.json())
+      .then((data: { session?: typeof session }) => setSession(data.session ?? null))
+      .catch(() => setSession(null))
+  }, [])
+
+  async function updateTimeout(value: number) {
+    setSaving(true)
+    try {
+      const response = await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ action: 'settings', idleTimeoutSeconds: value }),
+      })
+      const data = await response.json() as { idleTimeoutSeconds?: number }
+      if (response.ok && data.idleTimeoutSeconds) {
+        setSession((current) => current ? { ...current, idleTimeoutSeconds: data.idleTimeoutSeconds ?? current.idleTimeoutSeconds } : current)
+      }
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function blockNow() {
+    await fetch('/api/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ action: 'block' }),
+    })
+    window.location.assign('/acesso')
+  }
+
+  const minutes = Math.max(1, Math.round((session?.idleTimeoutSeconds ?? 900) / 60))
+
   return (
     <div>
       <PageHeader
-        title="Segurança"
-        description="Postura de segurança do painel. Nesta V1 não há credenciais reais, contas de plataformas ou movimentação financeira conectadas."
+        title="Segurança do Gerente"
+        description="Controle da passkey, sessão ativa e bloqueio automático do painel."
       />
+
+      <Card className="mb-6 border-primary/20 bg-primary/[0.04]">
+        <CardHeader>
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <CardTitle className="flex items-center gap-2"><Clock3 className="size-5" /> Sessão do Gerente</CardTitle>
+              <CardDescription>O painel exige uma sessão WebAuthn ativa e é bloqueado após inatividade.</CardDescription>
+            </div>
+            <Badge variant={session?.active ? 'success' : 'warning'}>{session?.active ? 'Ativa' : 'Inativa'}</Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 text-sm sm:grid-cols-3">
+            <div><p className="text-muted-foreground">Dispositivo autenticado</p><p className="font-medium">Passkey deste dispositivo</p></div>
+            <div><p className="text-muted-foreground">Passkey cadastrada</p><p className="font-medium">Sim, protegida pelo sistema</p></div>
+            <div><p className="text-muted-foreground">Última atividade</p><p className="font-medium">{session?.lastSeenAt ? new Date(session.lastSeenAt).toLocaleString('pt-BR') : 'Agora'}</p></div>
+          </div>
+          <div className="flex flex-wrap items-end justify-between gap-4 border-t border-border/70 pt-4">
+            <label className="grid gap-1 text-sm">
+              <span className="text-muted-foreground">Bloqueio automático por inatividade</span>
+              <select
+                className="h-9 rounded-lg border border-input bg-background px-3"
+                value={minutes}
+                disabled={saving}
+                onChange={(event) => void updateTimeout(Number(event.target.value) * 60)}
+              >
+                <option value="1">1 minuto</option>
+                <option value="5">5 minutos</option>
+                <option value="15">15 minutos</option>
+                <option value="30">30 minutos</option>
+                <option value="60">1 hora</option>
+              </select>
+            </label>
+            <Button variant="destructive" onClick={() => void blockNow()}>
+              <Lock />
+              Bloquear Gerente agora
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card className="mb-6 border-primary/20 bg-primary/[0.04]">
         <CardContent className="flex items-start gap-4 p-5">

@@ -8,12 +8,16 @@ import {
   verifyRegistrationResponse,
 } from '@simplewebauthn/server'
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/types'
+import { cookies } from 'next/headers'
 import { sql } from './db'
 
 export const AUTH_COOKIE = 'gerente_session'
 export const AUTH_USER_ID = 'gerente-owner'
 const CHALLENGE_TTL_MS = 5 * 60 * 1000
 const SESSION_TTL_SECONDS = 8 * 60 * 60
+const DEFAULT_IDLE_TIMEOUT_SECONDS = 15 * 60
+const MIN_IDLE_TIMEOUT_SECONDS = 60
+const MAX_IDLE_TIMEOUT_SECONDS = 24 * 60 * 60
 
 function rpId() {
   return process.env.WEBAUTHN_RP_ID ?? 'localhost'
@@ -95,6 +99,18 @@ export async function ensureAuthTables() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `
+  await sql`
+    CREATE TABLE IF NOT EXISTS auth_settings (
+      id BOOLEAN PRIMARY KEY DEFAULT TRUE,
+      idle_timeout_seconds INTEGER NOT NULL DEFAULT ${DEFAULT_IDLE_TIMEOUT_SECONDS},
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `
+  await sql`
+    INSERT INTO auth_settings (id)
+    VALUES (TRUE)
+    ON CONFLICT (id) DO NOTHING
   `
 }
 
@@ -234,6 +250,27 @@ export async function createSession() {
   return { value: sessionCookieValue(token), maxAge: SESSION_TTL_SECONDS }
 }
 
+function clampIdleTimeout(value: number) {
+  return Math.min(MAX_IDLE_TIMEOUT_SECONDS, Math.max(MIN_IDLE_TIMEOUT_SECONDS, Math.round(value)))
+}
+
+export async function getIdleTimeoutSeconds() {
+  await ensureAuthTables()
+  const rows = await sql`SELECT idle_timeout_seconds FROM auth_settings WHERE id = TRUE`
+  return clampIdleTimeout(Number(rows[0]?.idle_timeout_seconds ?? DEFAULT_IDLE_TIMEOUT_SECONDS))
+}
+
+export async function updateIdleTimeoutSeconds(value: number) {
+  const seconds = clampIdleTimeout(value)
+  await ensureAuthTables()
+  await sql`
+    UPDATE auth_settings
+    SET idle_timeout_seconds = ${seconds}, updated_at = NOW()
+    WHERE id = TRUE
+  `
+  return seconds
+}
+
 export async function revokeSession(value: string | undefined) {
   if (!value || !isValidSessionCookie(value)) return
   const session = splitSession(value)
@@ -244,10 +281,56 @@ export async function sessionIsActive(value: string | undefined) {
   if (!value || !isValidSessionCookie(value)) return false
   const session = splitSession(value)
   if (!session) return false
+  const idleTimeoutSeconds = await getIdleTimeoutSeconds()
+  const rows = await sql`
+    SELECT token_hash, last_seen_at, expires_at
+    FROM auth_sessions
+    WHERE token_hash = ${tokenHash(session.token)}
+      AND expires_at > NOW()
+      AND last_seen_at > NOW() - (${idleTimeoutSeconds} * INTERVAL '1 second')
+    LIMIT 1
+  `
+  return rows.length > 0
+}
+
+export async function requestHasActiveSession() {
+  return sessionIsActive((await cookies()).get(AUTH_COOKIE)?.value)
+}
+
+export async function sessionStatus(value: string | undefined) {
+  const idleTimeoutSeconds = await getIdleTimeoutSeconds()
+  if (!value || !isValidSessionCookie(value)) {
+    return { active: false, idleTimeoutSeconds, lastSeenAt: null, expiresAt: null }
+  }
+  const session = splitSession(value)
+  if (!session) return { active: false, idleTimeoutSeconds, lastSeenAt: null, expiresAt: null }
+  const rows = await sql`
+    SELECT last_seen_at, expires_at
+    FROM auth_sessions
+    WHERE token_hash = ${tokenHash(session.token)}
+      AND expires_at > NOW()
+      AND last_seen_at > NOW() - (${idleTimeoutSeconds} * INTERVAL '1 second')
+    LIMIT 1
+  `
+  return {
+    active: rows.length > 0,
+    idleTimeoutSeconds,
+    lastSeenAt: rows[0]?.last_seen_at ?? null,
+    expiresAt: rows[0]?.expires_at ?? null,
+  }
+}
+
+export async function touchSession(value: string | undefined) {
+  if (!value || !isValidSessionCookie(value)) return false
+  const session = splitSession(value)
+  if (!session) return false
+  const idleTimeoutSeconds = await getIdleTimeoutSeconds()
   const rows = await sql`
     UPDATE auth_sessions
     SET last_seen_at = NOW()
-    WHERE token_hash = ${tokenHash(session.token)} AND expires_at > NOW()
+    WHERE token_hash = ${tokenHash(session.token)}
+      AND expires_at > NOW()
+      AND last_seen_at > NOW() - (${idleTimeoutSeconds} * INTERVAL '1 second')
     RETURNING token_hash
   `
   return rows.length > 0

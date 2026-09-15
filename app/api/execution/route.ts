@@ -12,6 +12,7 @@ import {
   type ExecutionRecord,
 } from '@/lib/execution-engine'
 import { persistExecution } from '@/lib/execution-store'
+import { requestHasActiveSession } from '@/lib/auth-server'
 
 type OpportunityRow = OpportunityInput & { id: string }
 
@@ -88,6 +89,9 @@ async function executeSafePage(execution: ExecutionRecord) {
 }
 
 export async function POST(request: Request) {
+  if (!(await requestHasActiveSession())) {
+    return NextResponse.json({ success: false, error: 'Autenticação necessária.' }, { status: 401 })
+  }
   try {
     const body = (await request.json()) as { opportunityId?: string } & Partial<OpportunityInput>
     const opportunity = body.opportunityId

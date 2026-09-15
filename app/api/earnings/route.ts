@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server'
 import { sql } from '@/lib/db'
+import { requestHasActiveSession } from '@/lib/auth-server'
 
 export async function GET() {
+  if (!(await requestHasActiveSession())) {
+    return NextResponse.json({ success: false, error: 'Autenticação necessária.' }, { status: 401 })
+  }
   try {
     await sql`
       CREATE TABLE IF NOT EXISTS earnings (
@@ -45,6 +49,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  if (!(await requestHasActiveSession())) {
+    return NextResponse.json({ success: false, error: 'Autenticação necessária.' }, { status: 401 })
+  }
   try {
     const body = await request.json()
 

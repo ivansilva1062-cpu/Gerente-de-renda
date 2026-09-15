@@ -8,6 +8,7 @@ import {
 } from '@/lib/manager-modules'
 import { decideManagerAction } from '@/lib/manager-decision'
 import { createExecution } from '@/lib/execution-engine'
+import { requestHasActiveSession } from '@/lib/auth-server'
 
 const pipeline = [
   'radar',
@@ -97,6 +98,9 @@ function orchestrate(candidate: OpportunityInput | null) {
 }
 
 export async function GET() {
+  if (!(await requestHasActiveSession())) {
+    return NextResponse.json({ success: false, error: 'Autenticação necessária.' }, { status: 401 })
+  }
   const candidate = await latestCandidate()
 
   return NextResponse.json({
@@ -106,6 +110,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  if (!(await requestHasActiveSession())) {
+    return NextResponse.json({ success: false, error: 'Autenticação necessária.' }, { status: 401 })
+  }
   try {
     const body = (await request.json()) as Partial<OpportunityInput>
     const candidate: OpportunityInput = {

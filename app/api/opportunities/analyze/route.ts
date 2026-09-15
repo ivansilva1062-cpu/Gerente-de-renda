@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { requestHasActiveSession } from '@/lib/auth-server'
 
 type AnalyzeRequest = {
   url?: string
@@ -412,6 +413,9 @@ async function inspectPage(
 export async function POST(
   request: Request,
 ) {
+  if (!(await requestHasActiveSession())) {
+    return NextResponse.json({ success: false, error: 'Autenticação necessária.' }, { status: 401 })
+  }
   try {
     const body =
       (await request.json()) as AnalyzeRequest

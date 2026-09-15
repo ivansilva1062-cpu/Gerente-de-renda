@@ -7,6 +7,7 @@ import {
   type OpportunityInput,
 } from '@/lib/manager-modules'
 import { decideManagerAction } from '@/lib/manager-decision'
+import { requestHasActiveSession } from '@/lib/auth-server'
 
 /*
  * CÉREBRO DO GERENTE DE RENDA
@@ -23,6 +24,9 @@ import { decideManagerAction } from '@/lib/manager-decision'
  */
 
 export async function GET() {
+  if (!(await requestHasActiveSession())) {
+    return NextResponse.json({ success: false, error: 'Autenticação necessária.' }, { status: 401 })
+  }
   try {
     /*
      * O agente sempre pode continuar trabalhando.

@@ -10,6 +10,7 @@ import {
   OPPORTUNITY_SOURCES,
   type OpportunityCategory,
 } from '@/lib/opportunity-catalog'
+import { requestHasActiveSession } from '@/lib/auth-server'
 
 type TavilyResult = {
   title?: string
@@ -994,6 +995,9 @@ async function cleanOldContent() {
  */
 
 export async function GET() {
+  if (!(await requestHasActiveSession())) {
+    return NextResponse.json({ success: false, error: 'Autenticação necessária.' }, { status: 401 })
+  }
   try {
     await ensureTable()
 

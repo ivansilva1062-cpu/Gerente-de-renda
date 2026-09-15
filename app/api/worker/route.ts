@@ -12,6 +12,7 @@ import {
   transitionExecution,
 } from '@/lib/execution-engine'
 import { persistExecution } from '@/lib/execution-store'
+import { requestHasActiveSession } from '@/lib/auth-server'
 
 /*
  * ==========================================
@@ -642,6 +643,9 @@ async function inspectOpportunity(
 export async function GET(
   request: Request,
 ) {
+  if (!(await requestHasActiveSession())) {
+    return NextResponse.json({ success: false, error: 'Autenticação necessária.' }, { status: 401 })
+  }
   try {
     /*
      * ======================================

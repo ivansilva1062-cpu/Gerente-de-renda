@@ -6,9 +6,12 @@ import {
   createSession,
   ensureAuthTables,
   hasCredential,
+  getIdleTimeoutSeconds,
   registrationOptions,
   revokeSession,
-  sessionIsActive,
+  sessionStatus,
+  touchSession,
+  updateIdleTimeoutSeconds,
   verifyAuthentication,
   verifyRegistration,
 } from '@/lib/auth-server'
@@ -29,9 +32,11 @@ export async function GET(request: Request) {
   try {
     await ensureAuthTables()
     const cookie = (await cookies()).get(AUTH_COOKIE)?.value
+    const session = await sessionStatus(cookie)
     return NextResponse.json({
       configured: await hasCredential(),
-      authenticated: await sessionIsActive(cookie),
+      authenticated: session.active,
+      session,
     })
   } catch (error) {
     return errorResponse(error)
@@ -41,7 +46,11 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   if (!sameOrigin(request)) return NextResponse.json({ success: false, error: 'Origem inválida.' }, { status: 403 })
   try {
-    const body = await request.json() as { action?: string; response?: RegistrationResponseJSON | AuthenticationResponseJSON }
+    const body = await request.json() as {
+      action?: string
+      response?: RegistrationResponseJSON | AuthenticationResponseJSON
+      idleTimeoutSeconds?: number
+    }
     const cookieStore = await cookies()
 
     if (body.action === 'registration-options') {
@@ -74,6 +83,27 @@ export async function POST(request: Request) {
       await revokeSession(cookieStore.get(AUTH_COOKIE)?.value)
       cookieStore.set(AUTH_COOKIE, '', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', path: '/', maxAge: 0 })
       return NextResponse.json({ success: true })
+    }
+    if (body.action === 'block') {
+      await revokeSession(cookieStore.get(AUTH_COOKIE)?.value)
+      cookieStore.set(AUTH_COOKIE, '', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', path: '/', maxAge: 0 })
+      return NextResponse.json({ success: true, blocked: true })
+    }
+    if (body.action === 'heartbeat') {
+      const active = await touchSession(cookieStore.get(AUTH_COOKIE)?.value)
+      if (!active) {
+        cookieStore.set(AUTH_COOKIE, '', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', path: '/', maxAge: 0 })
+        return NextResponse.json({ success: false, error: 'Sessão expirada por inatividade.' }, { status: 401 })
+      }
+      return NextResponse.json({ success: true, session: await sessionStatus(cookieStore.get(AUTH_COOKIE)?.value) })
+    }
+    if (body.action === 'settings') {
+      const active = await touchSession(cookieStore.get(AUTH_COOKIE)?.value)
+      if (!active) return NextResponse.json({ success: false, error: 'Autenticação necessária.' }, { status: 401 })
+      if (typeof body.idleTimeoutSeconds === 'number') {
+        await updateIdleTimeoutSeconds(body.idleTimeoutSeconds)
+      }
+      return NextResponse.json({ success: true, idleTimeoutSeconds: await getIdleTimeoutSeconds() })
     }
     return NextResponse.json({ success: false, error: 'Ação de autenticação desconhecida.' }, { status: 400 })
   } catch (error) {
