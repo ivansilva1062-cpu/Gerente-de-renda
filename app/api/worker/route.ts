@@ -56,6 +56,98 @@ type OpportunityRow = {
   requires_user_action: boolean
 }
 
+function getAuthorizedProfile() {
+  const name = process.env.OPERATOR_NAME?.trim()
+  const email = process.env.OPERATOR_EMAIL?.trim()
+  const phone = process.env.OPERATOR_PHONE?.trim()
+  const street = process.env.OPERATOR_ADDRESS_STREET?.trim()
+  const number = process.env.OPERATOR_ADDRESS_NUMBER?.trim()
+  const city = process.env.OPERATOR_ADDRESS_CITY?.trim()
+  const state = process.env.OPERATOR_ADDRESS_STATE?.trim()
+  const zip = process.env.OPERATOR_ADDRESS_ZIP?.trim()
+  const country = process.env.OPERATOR_ADDRESS_COUNTRY?.trim() || 'BR'
+
+  if (!name && !email && !phone && !street && !city && !zip) {
+    return null
+  }
+
+  return {
+    name,
+    email,
+    phone,
+    street,
+    number,
+    city,
+    state,
+    zip,
+    country,
+  }
+}
+
+async function getReusableBrowserSession(browserbase: Browserbase) {
+  const sessionId = process.env.BROWSERBASE_SESSION_ID
+  if (!sessionId) {
+    return browserbase.sessions.create()
+  }
+
+  const sessionsApi = (browserbase.sessions as unknown as { retrieve?: (id: string) => Promise<{ connectUrl: string; id: string }> })
+  if (typeof sessionsApi.retrieve === 'function') {
+    try {
+      return await sessionsApi.retrieve(sessionId)
+    } catch {
+      return browserbase.sessions.create()
+    }
+  }
+
+  return browserbase.sessions.create()
+}
+
+async function autoFillAuthorizedForm(page: { evaluate: (fn: (data: any) => void, data?: any) => Promise<any> }, profile: ReturnType<typeof getAuthorizedProfile>) {
+  if (!profile) return
+
+  const fillable = {
+    name: profile.name,
+    email: profile.email,
+    phone: profile.phone,
+    street: profile.street,
+    number: profile.number,
+    city: profile.city,
+    state: profile.state,
+    zip: profile.zip,
+    country: profile.country,
+  }
+
+  await page.evaluate((data) => {
+    const fill = (selector: string, value?: string) => {
+      if (!value) return false
+      const input = document.querySelector(selector) as HTMLInputElement | null
+      if (!input) return false
+      if (input.value && input.value.trim()) return false
+      if (input.type === 'password' || input.type === 'hidden' || input.type === 'file') return false
+      input.value = value
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+      return true
+    }
+
+    const selectors = [
+      ['input[name*=name], input[id*=name], input[autocomplete=name], input[autocomplete=given-name], input[autocomplete=family-name]', data.name],
+      ['input[type=email], input[name*=email], input[id*=email], input[autocomplete=email]', data.email],
+      ['input[type=tel], input[name*=phone], input[id*=phone], input[autocomplete=tel]', data.phone],
+      ['input[name*=street], input[id*=street], input[autocomplete=street-address], input[aria-label*=rua], input[aria-label*=endereço]', data.street],
+      ['input[name*=number], input[id*=number], input[autocomplete=address-line2]', data.number],
+      ['input[name*=city], input[id*=city], input[autocomplete=address-level2]', data.city],
+      ['input[name*=state], input[id*=state], input[autocomplete=address-level1]', data.state],
+      ['input[name*=zip], input[id*=zip], input[name*=cep], input[id*=cep], input[autocomplete=postal-code]', data.zip],
+      ['input[name*=country], input[id*=country], input[autocomplete=country]', data.country],
+    ] as const
+
+    for (const [selector, value] of selectors) {
+      if (value) fill(selector, value)
+    }
+  }, fillable)
+}
+
 async function ensureManagerColumns() {
   await sql`
     ALTER TABLE opportunities
@@ -378,8 +470,7 @@ async function inspectOpportunity(
       apiKey,
     })
 
-  const session =
-    await bb.sessions.create()
+  const session = await getReusableBrowserSession(bb)
 
   execution = transitionExecution(execution, 'running')
   await persistExecution(execution)
@@ -435,6 +526,11 @@ async function inspectOpportunity(
           30_000,
       },
     )
+
+    const authorizedProfile = getAuthorizedProfile()
+    if (authorizedProfile) {
+      await autoFillAuthorizedForm(page, authorizedProfile)
+    }
 
     /*
      * Pequena espera para conteúdo
