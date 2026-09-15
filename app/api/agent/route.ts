@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server'
 import { sql } from '@/lib/db'
+import {
+  runManagerModules,
+  type OpportunityInput,
+} from '@/lib/manager-modules'
 
 /*
  * CÉREBRO DO GERENTE DE RENDA
@@ -51,6 +55,14 @@ export async function GET() {
       estimatedValue: 0,
     }
 
+    let managerCandidate: OpportunityInput = {
+      title: 'Avaliacao de oportunidade',
+      url: 'https://example.com',
+      description:
+        'Trabalho remunerado com envio de tarefa e confirmação de pagamento.',
+      estimatedValue: 120,
+    }
+
     try {
       const result = await sql`
         SELECT
@@ -77,6 +89,32 @@ export async function GET() {
         estimatedValue: Number(
           row?.estimated_value ?? 0,
         ),
+      }
+
+      const opportunityRow = await sql`
+        SELECT
+          title,
+          url,
+          description,
+          estimated_value
+        FROM opportunities
+        WHERE title IS NOT NULL
+          AND url IS NOT NULL
+        ORDER BY created_at DESC NULLS LAST
+        LIMIT 1
+      `
+
+      const latestOpportunity = opportunityRow[0]
+
+      if (latestOpportunity) {
+        managerCandidate = {
+          title: String(latestOpportunity.title ?? 'Oportunidade em análise'),
+          url: String(latestOpportunity.url ?? 'https://example.com'),
+          description: String(latestOpportunity.description ?? ''),
+          estimatedValue: Number(
+            latestOpportunity.estimated_value ?? 0,
+          ),
+        }
       }
     } catch (error) {
       /*
@@ -136,10 +174,46 @@ export async function GET() {
       )
     }
 
+    const managerModules =
+      runManagerModules(
+        managerCandidate,
+      )
+
+    const pipeline = [
+      'radar',
+      'avaliador',
+      'risco',
+      'financeiro',
+      'publicador',
+      'vendedor',
+      'entrega',
+    ]
+
+    const blockedModules =
+      managerModules.filter(
+        (module) =>
+          !module.approved,
+      )
+
     return NextResponse.json({
       success: true,
 
       agent,
+
+      managerModules,
+
+      managerOrchestration: {
+        enabled: true,
+        pipeline,
+        approved:
+          blockedModules.length === 0,
+        blockedBy: blockedModules.map(
+          (module) =>
+            module.module,
+        ),
+        candidate: managerCandidate,
+        rulesPreserved: true,
+      },
 
       opportunities,
 
