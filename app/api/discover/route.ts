@@ -1,7 +1,10 @@
 import { NextResponse } from 'next/server'
 import { createHash } from 'crypto'
 import { sql } from '@/lib/db'
-import { assessOpportunity } from '@/lib/manager-modules'
+import {
+  assessOpportunity,
+  isInformationalContent,
+} from '@/lib/manager-modules'
 
 type TavilyResult = {
   title?: string
@@ -617,6 +620,16 @@ function isRealOpportunity(
     isBlockedTitle(
       title,
     )
+  ) {
+    return false
+  }
+
+  if (
+    isInformationalContent({
+      title,
+      url,
+      description: content,
+    })
   ) {
     return false
   }

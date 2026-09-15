@@ -46,9 +46,92 @@ function hasSensitiveFlow(text: string) {
   return /senha|password|cartão|card|pix|cripto|crypto|identidade|identity|documento|cpf|cnpj|pague para receber|depósito antecipado/i.test(text)
 }
 
+const contentUrlSignals = [
+  'blog',
+  'article',
+  'articles',
+  'guide',
+  'guides',
+  'how-to',
+  'howto',
+  'explained',
+  'news',
+  'resources',
+  'tips',
+  'what-is',
+  'what-are',
+  'reviews',
+  'comparison',
+]
+
+const contentTitleSignals = [
+  'how to',
+  'what is',
+  'what are',
+  'best ways',
+  'ultimate guide',
+  'everything you need to know',
+  'commission structure',
+  'tips and tricks',
+  'learn more about',
+  'ways to make money',
+  'how to make money',
+]
+
+const concreteOpportunitySignals = [
+  'apply now',
+  'sign up',
+  'signup',
+  'register now',
+  'join now',
+  'become a tester',
+  'become an affiliate',
+  'become a partner',
+  'start earning',
+  'get paid',
+  'paid survey',
+  'paid research',
+  'paid study',
+  'paid test',
+  'remote job',
+  'freelance job',
+  'microtask',
+  'affiliate program',
+  'referral program',
+]
+
+function containsAny(text: string, signals: string[]) {
+  return signals.some((signal) => text.includes(signal))
+}
+
+export function isInformationalContent(input: Pick<OpportunityInput, 'title' | 'url' | 'description'>) {
+  const title = input.title.toLowerCase()
+  const url = input.url.toLowerCase()
+  const description = (input.description ?? '').toLowerCase()
+  const text = `${title} ${description}`
+  const hasContentSignal =
+    containsAny(url, contentUrlSignals) ||
+    containsAny(title, contentTitleSignals)
+
+  return hasContentSignal && !containsAny(text, concreteOpportunitySignals)
+}
+
 export function radar(input: OpportunityInput): ModuleResult {
   const hasBasicData = Boolean(input.url && input.title)
   const clarityScore = input.description ? 10 : 0
+  const informationalContent = isInformationalContent(input)
+
+  if (informationalContent) {
+    return {
+      module: 'radar',
+      approved: false,
+      reason: 'Página classificada como conteúdo informativo, não como oportunidade concreta de trabalho ou renda.',
+      nextAction: 'Descartar do catálogo e continuar procurando uma página acionável.',
+      scoreImpact: -30,
+      blocked: false,
+      requiresHumanAction: false,
+    }
+  }
 
   return {
     module: 'radar',
@@ -67,16 +150,18 @@ export function avaliador(input: OpportunityInput): ModuleResult {
   const text = `${input.title} ${input.description ?? ''} ${input.category ?? ''}`.toLowerCase()
   const hasWorkSignal = /trabalho|task|tarefa|survey|pesquisa|teste|freelance|serviço|service|job|microtask|gig|gigwork/.test(text)
   const hasPaymentSignal = /paid|pago|pagamento|reward|recompensa|earn|ganhe|dollar|dólar|usd|\$/.test(text) || Number(input.estimatedValue ?? 0) > 0
+  const hasConcreteAction = containsAny(text, concreteOpportunitySignals)
   const hasClearTask = Boolean(input.title && input.description)
+  const approved = hasWorkSignal && hasPaymentSignal && hasConcreteAction && !isInformationalContent(input)
 
   return {
     module: 'avaliador',
-    approved: hasWorkSignal && hasPaymentSignal,
-    reason: hasWorkSignal && hasPaymentSignal
-      ? 'Há sinais consistentes de trabalho e remuneração.'
+    approved,
+    reason: approved
+      ? 'Há sinais concretos de ação, trabalho e remuneração.'
       : 'Sinais insuficientes para aprovação automática.',
     nextAction: hasWorkSignal && hasPaymentSignal ? 'Enviar para o Risco.' : 'Revisar clareza da tarefa e remuneração.',
-    scoreImpact: hasWorkSignal && hasPaymentSignal ? 25 + (hasClearTask ? 10 : 0) : -10,
+    scoreImpact: approved ? 25 + (hasClearTask ? 10 : 0) : -15,
     blocked: false,
     requiresHumanAction: false,
   }
@@ -85,17 +170,24 @@ export function avaliador(input: OpportunityInput): ModuleResult {
 export function risco(input: OpportunityInput): ModuleResult {
   const text = `${input.title} ${input.description ?? ''}`.toLowerCase()
   const suspicious = hasSensitiveFlow(text)
+  const informationalContent = isInformationalContent(input)
   const needsHumanAction = /captcha|verificação|identity|identidade|cadastro|login|senha|documento|autenticação|kYC/.test(text)
 
   return {
     module: 'risco',
-    approved: !suspicious,
+    approved: !suspicious && !informationalContent,
     reason: suspicious
       ? 'Risco detectado: exige ação financeira, credencial ou dado sensível.'
+      : informationalContent
+        ? 'Página informativa sem fluxo concreto de participação; não deve entrar no fluxo de execução.'
       : 'Nenhum sinal básico de risco bloqueante encontrado.',
-    nextAction: suspicious ? 'Enviar para revisão humana.' : 'Enviar para o Financeiro.',
-    scoreImpact: suspicious ? -35 : 15,
-    blocked: suspicious,
+    nextAction: suspicious
+      ? 'Enviar para revisão humana.'
+      : informationalContent
+        ? 'Descartar e manter o Radar procurando oportunidades acionáveis.'
+        : 'Enviar para o Financeiro.',
+    scoreImpact: suspicious ? -35 : informationalContent ? -20 : 15,
+    blocked: suspicious || informationalContent,
     requiresHumanAction: Boolean(needsHumanAction),
   }
 }
