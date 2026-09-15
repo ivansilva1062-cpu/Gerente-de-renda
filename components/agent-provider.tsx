@@ -26,6 +26,7 @@ import {
 import {
   assessOpportunity,
 } from '@/lib/manager-modules'
+import { pickNextOpportunity } from '@/lib/execution-engine'
 
 interface AgentContextValue {
   status: AgentStatus
@@ -764,6 +765,64 @@ export function AgentProvider({
       [],
     )
 
+  const autoQueueNextOpportunity =
+    useCallback(
+      () => {
+        if (
+          statusRef.current !==
+          'working'
+        ) {
+          return
+        }
+
+        const candidates =
+          opportunities
+            .filter(
+              (opportunity) =>
+                opportunity.status ===
+                  'new' ||
+                opportunity.status ===
+                  'queued',
+            )
+            .map(
+              (opportunity) => ({
+                id: opportunity.id,
+                status: opportunity.status,
+                managerScore:
+                  opportunity.managerScore ??
+                  evaluateManagerModules(
+                    opportunity,
+                  ).score,
+                confidence:
+                  opportunity.confidence,
+                estimatedValue:
+                  opportunity.estimatedValue,
+              }),
+            )
+
+        const nextOpportunity =
+          pickNextOpportunity(
+            candidates,
+            taskRunningRef.current,
+          )
+
+        if (
+          nextOpportunity &&
+          !taskRunningRef.current.has(
+            nextOpportunity.id,
+          )
+        ) {
+          startOpportunity(
+            nextOpportunity.id,
+          )
+        }
+      },
+      [
+        opportunities,
+        startOpportunity,
+      ],
+    )
+
   /*
    * ==========================================
    * WORKER DA OPORTUNIDADE
@@ -1472,12 +1531,17 @@ export function AgentProvider({
 
   useEffect(() => {
     void refreshEarnings()
-
     void runDiscoveryCycle()
   }, [
     refreshEarnings,
     runDiscoveryCycle,
   ])
+
+  useEffect(() => {
+    if (statusRef.current === 'working') {
+      autoQueueNextOpportunity()
+    }
+  }, [autoQueueNextOpportunity, opportunities, status])
 
   /*
    * ==========================================

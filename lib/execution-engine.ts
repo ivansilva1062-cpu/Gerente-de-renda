@@ -134,3 +134,32 @@ export function transitionExecution(
     updatedAt: timestamp(now),
   }
 }
+
+export type QueueCandidate = {
+  id: string
+  status?: string
+  managerScore?: number
+  confidence?: number
+  estimatedValue?: number
+}
+
+export function pickNextOpportunity(
+  opportunities: QueueCandidate[],
+  excludedIds: Iterable<string> = [],
+) {
+  const blocked = new Set(excludedIds)
+
+  const next = opportunities
+    .filter((opportunity) => opportunity.status !== 'running' && opportunity.status !== 'done')
+    .filter((opportunity) => !blocked.has(opportunity.id))
+    .sort((left, right) => {
+      const scoreDiff = Number(right.managerScore ?? 0) - Number(left.managerScore ?? 0)
+      if (scoreDiff !== 0) return scoreDiff
+      const confidenceDiff = Number(right.confidence ?? 0) - Number(left.confidence ?? 0)
+      if (confidenceDiff !== 0) return confidenceDiff
+      return Number(right.estimatedValue ?? 0) - Number(left.estimatedValue ?? 0)
+    })
+    .at(0)
+
+  return next ?? null
+}

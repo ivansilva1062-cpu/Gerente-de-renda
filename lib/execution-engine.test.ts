@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { createExecution, transitionExecution } from './execution-engine.ts'
+import {
+  createExecution,
+  pickNextOpportunity,
+  transitionExecution,
+} from './execution-engine.ts'
 import { decideManagerAction } from './manager-decision.ts'
 import { assessOpportunity, runManagerModules } from './manager-modules.ts'
 
@@ -89,6 +93,21 @@ test('permite retomar uma execução após intervenção humana e continuar auto
 
   assert.equal(running.state, 'running')
   assert.equal(running.intervention?.required, true)
+})
+
+test('seleciona a próxima oportunidade pronta em fila e evita duplicidade', () => {
+  const opportunities = [
+    { id: 'a', status: 'new', managerScore: 50, confidence: 80, estimatedValue: 10 },
+    { id: 'b', status: 'new', managerScore: 95, confidence: 99, estimatedValue: 40 },
+    { id: 'c', status: 'running', managerScore: 90, confidence: 90, estimatedValue: 30 },
+    { id: 'd', status: 'new', managerScore: 95, confidence: 99, estimatedValue: 40 },
+  ]
+
+  const queued = pickNextOpportunity(opportunities, new Set(['d']))
+
+  assert.equal(queued?.id, 'b')
+  assert.notEqual(queued?.id, 'd')
+  assert.equal(pickNextOpportunity(opportunities, new Set(['a', 'b', 'c', 'd'])), null)
 })
 
 test('não permite concluir uma execução bloqueada ou parada para humano', () => {
