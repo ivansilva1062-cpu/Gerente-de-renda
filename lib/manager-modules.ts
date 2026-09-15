@@ -111,6 +111,11 @@ const concreteOpportunitySignals = [
   'microtask',
   'affiliate program',
   'referral program',
+  'service request',
+  'service provider',
+  'sell products',
+  'sales opportunity',
+  'commissioned sales',
 ]
 
 function containsAny(text: string, signals: string[]) {
@@ -165,7 +170,7 @@ export function radar(input: OpportunityInput): ModuleResult {
 
 export function avaliador(input: OpportunityInput): ModuleResult {
   const text = `${input.title} ${input.description ?? ''} ${input.category ?? ''}`.toLowerCase()
-  const hasWorkSignal = /trabalho|task|tarefa|survey|pesquisa|teste|freelance|serviço|service|job|microtask|gig|gigwork/.test(text)
+  const hasWorkSignal = /trabalho|task|tarefa|survey|pesquisa|teste|freelance|serviço|service|job|microtask|gig|gigwork|venda|sales|sell|produto|product|affiliate|creator/.test(text)
   const hasPaymentSignal = /paid|pago|pagamento|reward|recompensa|earn|ganhe|dollar|dólar|usd|\$|compensation|salary|hourly rate|per task|per study|per test|per survey/.test(text)
   const hasConcreteAction = containsAny(text, concreteOpportunitySignals)
   const hasClearTask = Boolean(input.title && input.description)
@@ -249,7 +254,7 @@ export function risco(input: OpportunityInput): ModuleResult {
   const text = `${input.title} ${input.description ?? ''}`.toLowerCase()
   const suspicious = hasSensitiveFlow(text)
   const informationalContent = isInformationalContent(input)
-  const needsHumanAction = /captcha|verificação|identity|identidade|cadastro|login|senha|documento|autenticação|kYC/.test(text)
+  const needsHumanAction = /captcha|verificação|identity|identidade|cadastro|login|senha|documento|autenticação|kyc/.test(text)
 
   return {
     module: 'risco',

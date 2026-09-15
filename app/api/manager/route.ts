@@ -17,13 +17,6 @@ const pipeline = [
   'entrega',
 ] as const
 
-const fallbackCandidate: OpportunityInput = {
-  title: 'Avaliacao de oportunidade',
-  url: 'https://example.com',
-  description: 'Trabalho remunerado com envio de tarefa e confirmação de pagamento.',
-  estimatedValue: 120,
-}
-
 async function latestCandidate() {
   try {
     const result = await sql`
@@ -31,31 +24,44 @@ async function latestCandidate() {
         title,
         url,
         description,
+        source,
         estimated_value
       FROM opportunities
       WHERE title IS NOT NULL
         AND url IS NOT NULL
-      ORDER BY created_at DESC NULLS LAST
-      LIMIT 1
+      ORDER BY manager_blocked ASC, manager_score DESC, confidence DESC, estimated_value DESC, created_at DESC NULLS LAST
+      LIMIT 20
     `
 
-    const row = result[0]
-
-    return row
-      ? {
-          title: String(row.title ?? fallbackCandidate.title),
-          url: String(row.url ?? fallbackCandidate.url),
-          description: String(row.description ?? ''),
-          estimatedValue: Number(row.estimated_value ?? 0),
-        }
-      : fallbackCandidate
+    return result
+      .map((row) => ({
+        title: String(row.title ?? ''),
+        url: String(row.url ?? ''),
+        description: String(row.description ?? ''),
+        source: String(row.source ?? ''),
+        estimatedValue: Number(row.estimated_value ?? 0),
+      }))
+      .map((candidate) => ({ candidate, assessment: assessOpportunity(candidate) }))
+      .sort((left, right) => right.assessment.score - left.assessment.score)
+      .at(0)?.candidate ?? null
   } catch (error) {
     console.error('Erro ao consultar candidata do gerente:', error)
-    return fallbackCandidate
+    return null
   }
 }
 
-function orchestrate(candidate: OpportunityInput) {
+function orchestrate(candidate: OpportunityInput | null) {
+  if (!candidate) {
+    return {
+      candidate: null,
+      modules: [],
+      assessment: null,
+      decision: null,
+      pipeline,
+      message: 'Não há candidata real disponível no momento; o Radar deve continuar pesquisando.',
+    }
+  }
+
   const modules = runManagerModules(candidate)
   const assessment = assessOpportunity(candidate)
   const decision = decideManagerAction(modules, {

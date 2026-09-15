@@ -48,6 +48,21 @@ const SEARCHES = [
       'affiliate programs join apply become affiliate start earning',
     category: 'affiliate',
   },
+  {
+    query:
+      'legitimate paid service requests remote provider apply get paid',
+    category: 'services',
+  },
+  {
+    query:
+      'legitimate commission sales opportunities remote sell products apply',
+    category: 'sales',
+  },
+  {
+    query:
+      'legitimate creator publishing content monetization program apply get paid',
+    category: 'content',
+  },
 ]
 
 const ALLOWED_CATEGORIES = [
@@ -57,6 +72,9 @@ const ALLOWED_CATEGORIES = [
   'content',
   'affiliate',
   'testing',
+  'services',
+  'sales',
+  'other',
 ] as const
 
 type Category =
@@ -150,6 +168,13 @@ const ACTION_SIGNALS = [
   'participants',
   'paid survey',
   'paid surveys',
+  'paid service',
+  'service provider',
+  'sell products',
+  'sales opportunity',
+  'commissioned sales',
+  'creator program',
+  'publishing program',
 ]
 
 /*
@@ -222,6 +247,9 @@ const PAYMENT_SIGNALS = [
   'per study',
   'per test',
   'per survey',
+  'commission',
+  'per project',
+  'per client',
 ]
 
 /*

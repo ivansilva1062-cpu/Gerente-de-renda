@@ -15,6 +15,9 @@ export type OpportunityCategory =
   | 'content'
   | 'affiliate'
   | 'testing'
+  | 'services'
+  | 'sales'
+  | 'other'
 
 export type OpportunityStatus =
   | 'new'

@@ -57,13 +57,7 @@ export async function GET() {
       estimatedValue: 0,
     }
 
-    let managerCandidate: OpportunityInput = {
-      title: 'Avaliacao de oportunidade',
-      url: 'https://example.com',
-      description:
-        'Trabalho remunerado com envio de tarefa e confirmação de pagamento.',
-      estimatedValue: 120,
-    }
+    let managerCandidate: OpportunityInput | null = null
 
     try {
       const result = await sql`
@@ -98,25 +92,29 @@ export async function GET() {
           title,
           url,
           description,
+          source,
           estimated_value
         FROM opportunities
         WHERE title IS NOT NULL
           AND url IS NOT NULL
-        ORDER BY created_at DESC NULLS LAST
-        LIMIT 1
+        ORDER BY manager_blocked ASC, manager_score DESC, confidence DESC, estimated_value DESC, created_at DESC NULLS LAST
+        LIMIT 20
       `
 
-      const latestOpportunity = opportunityRow[0]
+      const latestOpportunity = opportunityRow
+        .map((row) => ({
+          title: String(row.title ?? ''),
+          url: String(row.url ?? ''),
+          description: String(row.description ?? ''),
+          source: String(row.source ?? ''),
+          estimatedValue: Number(row.estimated_value ?? 0),
+        }))
+        .map((candidate) => ({ candidate, assessment: assessOpportunity(candidate) }))
+        .sort((left, right) => right.assessment.score - left.assessment.score)
+        .at(0)?.candidate
 
       if (latestOpportunity) {
-        managerCandidate = {
-          title: String(latestOpportunity.title ?? 'Oportunidade em análise'),
-          url: String(latestOpportunity.url ?? 'https://example.com'),
-          description: String(latestOpportunity.description ?? ''),
-          estimatedValue: Number(
-            latestOpportunity.estimated_value ?? 0,
-          ),
-        }
+        managerCandidate = latestOpportunity
       }
     } catch (error) {
       /*
@@ -176,23 +174,14 @@ export async function GET() {
       )
     }
 
-    const managerModules =
-      runManagerModules(
-        managerCandidate,
-      )
-
-    const assessment = assessOpportunity(
-      managerCandidate,
-    )
-
-    const managerDecision =
-      decideManagerAction(
-        managerModules,
-        {
+    const managerModules = managerCandidate ? runManagerModules(managerCandidate) : []
+    const assessment = managerCandidate ? assessOpportunity(managerCandidate) : null
+    const managerDecision = assessment
+      ? decideManagerAction(managerModules, {
           score: assessment.score,
           priority: assessment.priority,
-        },
-      )
+        })
+      : null
 
     const pipeline = [
       'radar',
@@ -230,6 +219,9 @@ export async function GET() {
         rulesPreserved: true,
         assessment,
         decision: managerDecision,
+        message: managerCandidate
+          ? 'Candidata real priorizada pelo score combinado dos módulos.'
+          : 'Não há candidata real disponível no momento; o Radar deve continuar pesquisando.',
       },
 
       opportunities,

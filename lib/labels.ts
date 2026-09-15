@@ -7,6 +7,9 @@ export const categoryLabel: Record<OpportunityCategory, string> = {
   content: 'Conteúdo',
   affiliate: 'Afiliados',
   testing: 'Testes',
+  services: 'Serviços',
+  sales: 'Vendas',
+  other: 'Outras',
 }
 
 export const opportunityStatusLabel: Record<OpportunityStatus, string> = {
