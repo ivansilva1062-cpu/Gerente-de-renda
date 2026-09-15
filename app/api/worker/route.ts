@@ -3,6 +3,7 @@ import { chromium } from 'playwright-core'
 import Browserbase from '@browserbasehq/sdk'
 
 import { sql } from '@/lib/db'
+import { assessOpportunity } from '@/lib/manager-modules'
 
 /*
  * ==========================================
@@ -42,6 +43,26 @@ type OpportunityRow = {
   url: string | null
   requires_signup: boolean
   requires_user_action: boolean
+}
+
+async function ensureManagerColumns() {
+  await sql`
+    ALTER TABLE opportunities
+    ADD COLUMN IF NOT EXISTS manager_score INTEGER
+    NOT NULL DEFAULT 0
+  `
+
+  await sql`
+    ALTER TABLE opportunities
+    ADD COLUMN IF NOT EXISTS manager_priority TEXT
+    NOT NULL DEFAULT 'low'
+  `
+
+  await sql`
+    ALTER TABLE opportunities
+    ADD COLUMN IF NOT EXISTS manager_blocked BOOLEAN
+    NOT NULL DEFAULT FALSE
+  `
 }
 
 /*
@@ -232,6 +253,34 @@ async function getOpportunity(
 async function inspectOpportunity(
   opportunity: OpportunityRow,
 ) {
+  const assessment = assessOpportunity({
+    title: opportunity.title,
+    url: opportunity.url ?? '',
+    description: `${opportunity.source} ${opportunity.category}`,
+    estimatedValue: Number(opportunity.estimated_value ?? 0),
+    confidence: Number(opportunity.confidence ?? 0),
+    category: opportunity.category,
+  })
+
+  if (assessment.blocked) {
+    await sql`
+      UPDATE opportunities
+      SET
+        status = 'pending',
+        manager_score = ${assessment.score},
+        manager_priority = ${assessment.priority},
+        manager_blocked = TRUE
+      WHERE id = ${opportunity.id}
+    `
+
+    return {
+      success: false,
+      state: 'pending',
+      reason: assessment.summary,
+      assessment,
+    }
+  }
+
   /*
    * A URL é obrigatória.
    */
@@ -487,6 +536,8 @@ async function inspectOpportunity(
           false,
       },
 
+      manager: assessment,
+
       nextAction:
         requiresHuman
           ? 'Aguardando ação do usuário na fonte oficial.'
@@ -602,6 +653,8 @@ export async function GET(
      * MODO BROWSERBASE
      * ======================================
      */
+
+    await ensureManagerColumns()
 
     const opportunity =
       await getOpportunity(

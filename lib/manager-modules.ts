@@ -14,6 +14,8 @@ export type OpportunityInput = {
   url: string
   description?: string
   estimatedValue?: number
+  category?: string
+  confidence?: number
 }
 
 export type ModuleResult = {
@@ -32,13 +34,16 @@ export type OpportunityAssessment = {
   blocked: boolean
   requiresHumanAction: boolean
   summary: string
+  route: 'blocked' | 'human_review' | 'prepare' | 'monitor'
+  blockedBy: ManagerModuleName[]
+  modules: ModuleResult[]
 }
 
 const clampScore = (value: number) =>
   Math.min(100, Math.max(0, Math.round(value)))
 
 function hasSensitiveFlow(text: string) {
-  return /senha|password|cartão|card|pix|cripto|crypto|identidade|identity|documento|cpf|cnpj|pague para receber|depósito antecipado|pagamento|pay/i.test(text)
+  return /senha|password|cartão|card|pix|cripto|crypto|identidade|identity|documento|cpf|cnpj|pague para receber|depósito antecipado/i.test(text)
 }
 
 export function radar(input: OpportunityInput): ModuleResult {
@@ -59,9 +64,9 @@ export function radar(input: OpportunityInput): ModuleResult {
 }
 
 export function avaliador(input: OpportunityInput): ModuleResult {
-  const text = `${input.title} ${input.description ?? ''}`.toLowerCase()
+  const text = `${input.title} ${input.description ?? ''} ${input.category ?? ''}`.toLowerCase()
   const hasWorkSignal = /trabalho|task|tarefa|survey|pesquisa|teste|freelance|serviço|service|job|microtask|gig|gigwork/.test(text)
-  const hasPaymentSignal = /paid|pago|pagamento|reward|recompensa|earn|ganhe|dollar|dólar|usd|\$/.test(text)
+  const hasPaymentSignal = /paid|pago|pagamento|reward|recompensa|earn|ganhe|dollar|dólar|usd|\$/.test(text) || Number(input.estimatedValue ?? 0) > 0
   const hasClearTask = Boolean(input.title && input.description)
 
   return {
@@ -179,13 +184,19 @@ export function runManagerModules(input: OpportunityInput): ModuleResult[] {
 export function assessOpportunity(input: OpportunityInput): OpportunityAssessment {
   const results = runManagerModules(input)
   const baseline = 30
+  const confidenceImpact = Math.round((Number(input.confidence ?? 0) - 50) / 5)
 
   const score = clampScore(
-    baseline + results.reduce((total, result) => total + (result.scoreImpact ?? 0), 0),
+    baseline +
+      confidenceImpact +
+      results.reduce((total, result) => total + (result.scoreImpact ?? 0), 0),
   )
 
   const blocked = results.some((result) => result.blocked)
   const requiresHumanAction = results.some((result) => result.requiresHumanAction)
+  const blockedBy = results
+    .filter((result) => result.blocked)
+    .map((result) => result.module)
 
   const priority: OpportunityPriority =
     blocked
@@ -204,11 +215,22 @@ export function assessOpportunity(input: OpportunityInput): OpportunityAssessmen
         ? 'Prioridade média: potencial relevante, mas com revisão necessária.'
         : 'Baixa prioridade: potencial limitado, risco alto ou clareza insuficiente.'
 
+  const route = blocked
+    ? 'blocked'
+    : requiresHumanAction
+      ? 'human_review'
+      : priority === 'high'
+        ? 'prepare'
+        : 'monitor'
+
   return {
     score,
     priority,
     blocked,
     requiresHumanAction,
     summary,
+    route,
+    blockedBy,
+    modules: results,
   }
 }

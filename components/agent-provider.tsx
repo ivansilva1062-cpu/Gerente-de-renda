@@ -24,7 +24,7 @@ import {
   seedIntegrations,
 } from '@/lib/mock-data'
 import {
-  runManagerModules,
+  assessOpportunity,
 } from '@/lib/manager-modules'
 
 interface AgentContextValue {
@@ -77,10 +77,15 @@ const uid = () =>
 const evaluateManagerModules = (
   opportunity: Pick<
     Opportunity,
-    'title' | 'url' | 'source' | 'category' | 'estimatedValue'
+    | 'title'
+    | 'url'
+    | 'source'
+    | 'category'
+    | 'estimatedValue'
+    | 'confidence'
   >,
 ) =>
-  runManagerModules({
+  assessOpportunity({
     title: opportunity.title,
     url: opportunity.url ?? '',
     description: `${opportunity.source} ${opportunity.category}`,
@@ -88,6 +93,8 @@ const evaluateManagerModules = (
       Number(
         opportunity.estimatedValue ?? 0,
       ),
+    category: opportunity.category,
+    confidence: opportunity.confidence,
   })
 
 type DatabaseEarning = {
@@ -483,41 +490,40 @@ export function AgentProvider({
            * maior confiança primeiro.
            */
 
+          const priorityRank = {
+            high: 3,
+            medium: 2,
+            low: 1,
+          } as const
+
           const sorted =
             [...valid].sort(
               (
                 a,
                 b,
               ) => {
-                const aAction =
-                  a.requiresUserAction
-                    ? 1
-                    : 0
-
-                const bAction =
-                  b.requiresUserAction
-                    ? 1
-                    : 0
-
-                if (
-                  aAction !==
-                  bAction
-                ) {
-                  return (
-                    bAction -
-                    aAction
-                  )
-                }
+                const aAssessment = assessOpportunity({
+                  title: a.title,
+                  url: a.url ?? '',
+                  description: `${a.source} ${a.category}`,
+                  estimatedValue: a.estimatedValue,
+                  category: a.category,
+                  confidence: a.confidence,
+                })
+                const bAssessment = assessOpportunity({
+                  title: b.title,
+                  url: b.url ?? '',
+                  description: `${b.source} ${b.category}`,
+                  estimatedValue: b.estimatedValue,
+                  category: b.category,
+                  confidence: b.confidence,
+                })
 
                 return (
-                  Number(
-                    b.confidence ??
-                      0,
-                  ) -
-                  Number(
-                    a.confidence ??
-                      0,
-                  )
+                  (b.managerScore ?? bAssessment.score) -
+                  (a.managerScore ?? aAssessment.score) ||
+                  priorityRank[b.managerPriority ?? bAssessment.priority] -
+                  priorityRank[a.managerPriority ?? aAssessment.priority]
                 )
               },
             )
@@ -815,6 +821,53 @@ export function AgentProvider({
         }
 
         /*
+         * Inspeção operacional da fonte oficial.
+         * O Worker mantém o Browserbase isolado e nunca envia
+         * credenciais, dados sensíveis ou confirma pagamentos.
+         */
+        try {
+          const response = await fetch(
+            `/api/worker?opportunityId=${encodeURIComponent(opportunity.id)}`,
+            {
+              method: 'GET',
+              cache: 'no-store',
+            },
+          )
+
+          if (response.ok) {
+            const data = await response.json()
+            const page = data.result?.page
+
+            if (page?.humanActionRequired) {
+              setTasks((previous) =>
+                previous.map((task) =>
+                  task.id === taskId
+                    ? {
+                        ...task,
+                        state: 'pending',
+                        progress: 25,
+                        requiresUserAction: true,
+                        preparationStatus: 'requires_user',
+                        pendingReason:
+                          'A fonte oficial exige uma ação humana antes de continuar.',
+                      }
+                    : task,
+                ),
+              )
+
+              updateOpportunityStatus(opportunity.id, 'pending')
+              pushActivity({
+                kind: 'pending',
+                message: `Aguardando ação humana na fonte oficial — ${opportunity.title}.`,
+              })
+              return
+            }
+          }
+        } catch (error) {
+          console.error('Worker indisponível; mantendo fluxo local:', error)
+        }
+
+        /*
          * ==================================
          * VERIFICAÇÃO DE URL
          * ==================================
@@ -1055,16 +1108,28 @@ export function AgentProvider({
         const taskId =
           uid()
 
-        const managerModules =
+        const assessment =
           evaluateManagerModules(
             opportunity,
           )
 
-        const failedModules =
-          managerModules.filter(
-            (result) =>
-              !result.approved,
+        if (assessment.blocked) {
+          taskRunningRef.current.delete(
+            opportunityId,
           )
+
+          updateOpportunityStatus(
+            opportunityId,
+            'pending',
+          )
+
+          pushActivity({
+            kind: 'pending',
+            message: `Risco bloqueou a oportunidade — ${opportunity.title}.`,
+          })
+
+          return
+        }
 
         const task:
           Task = {
@@ -1077,10 +1142,12 @@ export function AgentProvider({
           source:
             opportunity.source,
 
-          managerModules,
+          managerModules: assessment.modules,
 
           state:
-            'running',
+            assessment.requiresHumanAction
+              ? 'pending'
+              : 'running',
 
           estimatedValue:
             Number(
@@ -1097,22 +1164,31 @@ export function AgentProvider({
           actionUrl:
             opportunity.url ??
             undefined,
+
+          requiresUserAction:
+            assessment.requiresHumanAction,
+
+          preparationStatus:
+            assessment.requiresHumanAction
+              ? 'requires_user'
+              : 'preparing',
+
+          pendingReason:
+            assessment.requiresHumanAction
+              ? 'Ação humana necessária antes de prosseguir com segurança.'
+              : undefined,
+
+          prepared:
+            assessment.route === 'prepare',
         }
 
-        if (
-          failedModules.length > 0
-        ) {
+        if (assessment.requiresHumanAction) {
           pushActivity({
             kind:
-              'system',
+              'pending',
 
             message:
-              `Validação do gerente: ${failedModules
-                .map(
-                  (result) =>
-                    `${result.module} — ${result.reason}`,
-                )
-                .join('; ')}`,
+              `Avaliador encaminhou para ação humana — ${opportunity.title}.`,
           })
         }
 
@@ -1134,7 +1210,9 @@ export function AgentProvider({
 
         updateOpportunityStatus(
           opportunityId,
-          'running',
+          assessment.requiresHumanAction
+            ? 'pending'
+            : 'running',
         )
 
         /*
@@ -1153,14 +1231,20 @@ export function AgentProvider({
          * Executa o Worker.
          */
 
-        void processOpportunity(
-          opportunity,
-          taskId,
-        ).finally(() => {
+        if (!assessment.requiresHumanAction) {
+          void processOpportunity(
+            opportunity,
+            taskId,
+          ).finally(() => {
+            taskRunningRef.current.delete(
+              opportunityId,
+            )
+          })
+        } else {
           taskRunningRef.current.delete(
             opportunityId,
           )
-        })
+        }
       },
       [
         evaluateManagerModules,

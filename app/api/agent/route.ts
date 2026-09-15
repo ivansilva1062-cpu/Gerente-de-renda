@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { sql } from '@/lib/db'
 import {
+  assessOpportunity,
   runManagerModules,
   type OpportunityInput,
 } from '@/lib/manager-modules'
@@ -179,6 +180,10 @@ export async function GET() {
         managerCandidate,
       )
 
+    const assessment = assessOpportunity(
+      managerCandidate,
+    )
+
     const pipeline = [
       'radar',
       'avaliador',
@@ -213,6 +218,7 @@ export async function GET() {
         ),
         candidate: managerCandidate,
         rulesPreserved: true,
+        assessment,
       },
 
       opportunities,

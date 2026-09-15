@@ -1,4 +1,7 @@
-import type { ModuleResult } from '@/lib/manager-modules'
+import type {
+  ModuleResult,
+  OpportunityPriority,
+} from '@/lib/manager-modules'
 
 export type AgentStatus =
   | 'working'
@@ -59,6 +62,12 @@ export interface Opportunity {
    * Confiança do radar.
    */
   confidence: number // 0-100
+
+  managerScore?: number
+
+  managerPriority?: OpportunityPriority
+
+  managerBlocked?: boolean
 
   status: OpportunityStatus
 

@@ -4,102 +4,7 @@ import { RefreshCw } from 'lucide-react'
 
 import { OpportunityItem } from '@/components/opportunity-item'
 import { useAgent } from '@/components/agent-provider'
-
-const CATEGORY_PRIORITY: Record<string, number> = {
-  testing: 6,
-  surveys: 5,
-  microtasks: 4,
-  freelance: 3,
-  content: 2,
-  affiliate: 1,
-}
-
-const LOW_VALUE_PHRASES = [
-  'how to',
-  'how do',
-  'what is',
-  'what are',
-  'best ',
-  'top ',
-  'ultimate guide',
-  'guide',
-  'explained',
-  'tips',
-  'commission structure',
-  'resources',
-  'blog',
-  'article',
-  'news',
-]
-
-const ACTION_PHRASES = [
-  'apply',
-  'apply now',
-  'sign up',
-  'signup',
-  'register',
-  'join',
-  'join now',
-  'become',
-  'paid',
-  'get paid',
-  'earn',
-  'earning',
-  'tester',
-  'testing',
-  'research study',
-  'paid study',
-  'paid survey',
-  'microtask',
-  'freelance job',
-  'remote job',
-]
-
-function opportunityScore(opportunity: {
-  category: string
-  confidence: number
-  title: string
-}) {
-  const categoryScore =
-    (CATEGORY_PRIORITY[
-      opportunity.category
-    ] ?? 0) * 100
-
-  const confidenceScore =
-    Number(
-      opportunity.confidence ?? 0,
-    )
-
-  const title =
-    opportunity.title.toLowerCase()
-
-  const contentPenalty =
-    LOW_VALUE_PHRASES.some(
-      (phrase) =>
-        title.includes(
-          phrase,
-        ),
-    )
-      ? -150
-      : 0
-
-  const actionBonus =
-    ACTION_PHRASES.some(
-      (phrase) =>
-        title.includes(
-          phrase,
-        ),
-    )
-      ? 50
-      : 0
-
-  return (
-    categoryScore +
-    confidenceScore +
-    actionBonus +
-    contentPenalty
-  )
-}
+import { assessOpportunity } from '@/lib/manager-modules'
 
 export default function OportunidadesPage() {
   const {
@@ -116,9 +21,26 @@ export default function OportunidadesPage() {
   const prioritized =
     [...opportunities]
       .sort(
-        (a, b) =>
-          opportunityScore(b) -
-          opportunityScore(a),
+        (a, b) => {
+          const aScore = a.managerScore ?? assessOpportunity({
+            title: a.title,
+            url: a.url ?? '',
+            description: `${a.source} ${a.category}`,
+            estimatedValue: a.estimatedValue,
+            category: a.category,
+            confidence: a.confidence,
+          }).score
+          const bScore = b.managerScore ?? assessOpportunity({
+            title: b.title,
+            url: b.url ?? '',
+            description: `${b.source} ${b.category}`,
+            estimatedValue: b.estimatedValue,
+            category: b.category,
+            confidence: b.confidence,
+          }).score
+
+          return bScore - aScore
+        },
       )
       .slice(0, 50)
 

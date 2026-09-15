@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { createHash } from 'crypto'
 import { sql } from '@/lib/db'
+import { assessOpportunity } from '@/lib/manager-modules'
 
 type TavilyResult = {
   title?: string
@@ -233,6 +234,7 @@ async function ensureTable() {
       title TEXT NOT NULL,
       source TEXT NOT NULL,
       category TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
       estimated_value NUMERIC(12,2) NOT NULL DEFAULT 0,
       confidence INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'new',
@@ -254,7 +256,31 @@ async function ensureTable() {
 
   await sql`
     ALTER TABLE opportunities
+    ADD COLUMN IF NOT EXISTS description TEXT
+    NOT NULL DEFAULT ''
+  `
+
+  await sql`
+    ALTER TABLE opportunities
     ADD COLUMN IF NOT EXISTS automated_preparation BOOLEAN
+    NOT NULL DEFAULT FALSE
+  `
+
+  await sql`
+    ALTER TABLE opportunities
+    ADD COLUMN IF NOT EXISTS manager_score INTEGER
+    NOT NULL DEFAULT 0
+  `
+
+  await sql`
+    ALTER TABLE opportunities
+    ADD COLUMN IF NOT EXISTS manager_priority TEXT
+    NOT NULL DEFAULT 'low'
+  `
+
+  await sql`
+    ALTER TABLE opportunities
+    ADD COLUMN IF NOT EXISTS manager_blocked BOOLEAN
     NOT NULL DEFAULT FALSE
   `
 }
@@ -758,12 +784,22 @@ async function saveOpportunity(
       paymentSignal,
     )
 
+  const assessment = assessOpportunity({
+    title,
+    url,
+    description: `${source} ${category} ${content}`,
+    estimatedValue,
+    confidence,
+    category,
+  })
+
   await sql`
     INSERT INTO opportunities (
       id,
       title,
       source,
       category,
+      description,
       estimated_value,
       confidence,
       status,
@@ -772,6 +808,9 @@ async function saveOpportunity(
       requires_user_action,
       language,
       automated_preparation,
+      manager_score,
+      manager_priority,
+      manager_blocked,
       discovered_at
     )
     VALUES (
@@ -779,6 +818,7 @@ async function saveOpportunity(
       ${title},
       ${source},
       ${category},
+      ${content.slice(0, 12000)},
       ${estimatedValue},
       ${confidence},
       'new',
@@ -787,6 +827,9 @@ async function saveOpportunity(
       ${humanAction || signup},
       'global',
       TRUE,
+      ${assessment.score},
+      ${assessment.priority},
+      ${assessment.blocked},
       NOW()
     )
 
@@ -800,6 +843,9 @@ async function saveOpportunity(
 
       category =
         EXCLUDED.category,
+
+      description =
+        EXCLUDED.description,
 
       estimated_value =
         CASE
@@ -819,6 +865,15 @@ async function saveOpportunity(
 
       requires_user_action =
         EXCLUDED.requires_user_action,
+
+      manager_score =
+        EXCLUDED.manager_score,
+
+      manager_priority =
+        EXCLUDED.manager_priority,
+
+      manager_blocked =
+        EXCLUDED.manager_blocked,
 
       discovered_at =
         NOW()
@@ -960,6 +1015,7 @@ export async function GET() {
           title,
           source,
           category,
+          description,
           estimated_value,
           confidence,
           status,
@@ -968,6 +1024,9 @@ export async function GET() {
           requires_user_action,
           language,
           automated_preparation,
+          manager_score,
+          manager_priority,
+          manager_blocked,
           discovered_at,
           created_at
         FROM opportunities
@@ -1031,6 +1090,19 @@ export async function GET() {
           automatedPreparation:
             Boolean(
               row.automated_preparation,
+            ),
+
+          managerScore:
+            Number(
+              row.manager_score ?? 0,
+            ),
+
+          managerPriority:
+            row.manager_priority ?? 'low',
+
+          managerBlocked:
+            Boolean(
+              row.manager_blocked,
             ),
 
           discoveredAt:
