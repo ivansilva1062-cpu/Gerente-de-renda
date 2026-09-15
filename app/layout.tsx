@@ -5,6 +5,7 @@ import './globals.css'
 import { AgentProvider } from '@/components/agent-provider'
 import { AppShell } from '@/components/app-shell'
 import { PwaRegister } from '@/components/pwa-register'
+import { AuthGate } from '@/components/auth-gate'
 
 const geistSans = Geist({
   subsets: ['latin'],
@@ -51,9 +52,11 @@ export default function RootLayout({
     <html lang="pt-BR" className={`${geistSans.variable} ${geistMono.variable} bg-background`}>
       <body className="font-sans antialiased">
         <PwaRegister />
-        <AgentProvider>
-          <AppShell>{children}</AppShell>
-        </AgentProvider>
+        <AuthGate>
+          <AgentProvider>
+            <AppShell>{children}</AppShell>
+          </AgentProvider>
+        </AuthGate>
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>
