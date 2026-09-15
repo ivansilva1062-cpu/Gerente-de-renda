@@ -103,7 +103,9 @@ async function getReusableBrowserSession(browserbase: Browserbase) {
   return browserbase.sessions.create()
 }
 
-async function autoFillAuthorizedForm(page: { evaluate: (fn: (data: any) => void, data?: any) => Promise<any> }, profile: ReturnType<typeof getAuthorizedProfile>) {
+type AuthorizedFormData = Record<string, string | undefined>
+
+async function autoFillAuthorizedForm(page: { evaluate: (fn: (data: AuthorizedFormData) => void, data?: AuthorizedFormData) => Promise<unknown> }, profile: ReturnType<typeof getAuthorizedProfile>) {
   if (!profile) return
 
   const fillable = {
