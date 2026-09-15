@@ -5,6 +5,7 @@ import {
   runManagerModules,
   type OpportunityInput,
 } from '@/lib/manager-modules'
+import { decideManagerAction } from '@/lib/manager-decision'
 
 /*
  * CÉREBRO DO GERENTE DE RENDA
@@ -184,6 +185,15 @@ export async function GET() {
       managerCandidate,
     )
 
+    const managerDecision =
+      decideManagerAction(
+        managerModules,
+        {
+          score: assessment.score,
+          priority: assessment.priority,
+        },
+      )
+
     const pipeline = [
       'radar',
       'avaliador',
@@ -219,6 +229,7 @@ export async function GET() {
         candidate: managerCandidate,
         rulesPreserved: true,
         assessment,
+        decision: managerDecision,
       },
 
       opportunities,

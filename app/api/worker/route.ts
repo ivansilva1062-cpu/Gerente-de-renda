@@ -4,6 +4,7 @@ import Browserbase from '@browserbasehq/sdk'
 
 import { sql } from '@/lib/db'
 import { assessOpportunity } from '@/lib/manager-modules'
+import { decideManagerAction } from '@/lib/manager-decision'
 
 /*
  * ==========================================
@@ -261,8 +262,15 @@ async function inspectOpportunity(
     confidence: Number(opportunity.confidence ?? 0),
     category: opportunity.category,
   })
+  const managerDecision = decideManagerAction(
+    assessment.modules,
+    {
+      score: assessment.score,
+      priority: assessment.priority,
+    },
+  )
 
-  if (assessment.blocked) {
+  if (managerDecision.decision === 'block') {
     await sql`
       UPDATE opportunities
       SET
@@ -278,6 +286,7 @@ async function inspectOpportunity(
       state: 'pending',
       reason: assessment.summary,
       assessment,
+      managerDecision,
     }
   }
 
@@ -471,6 +480,15 @@ async function inspectOpportunity(
       opportunity.requires_signup ||
       humanSignals.length >
         0
+    const finalManagerDecision = decideManagerAction(
+      assessment.modules,
+      {
+        score: assessment.score,
+        priority: assessment.priority,
+        humanActionRequired:
+          requiresHuman || paymentSignals.length > 0,
+      },
+    )
 
     await sql`
       UPDATE opportunities
@@ -537,6 +555,8 @@ async function inspectOpportunity(
       },
 
       manager: assessment,
+
+      managerDecision: finalManagerDecision,
 
       nextAction:
         requiresHuman
