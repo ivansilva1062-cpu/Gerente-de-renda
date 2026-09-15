@@ -135,6 +135,34 @@ export function transitionExecution(
   }
 }
 
+export type ExecutionSummary = {
+  queued: number
+  running: number
+  waiting_human: number
+  completed: number
+  blocked: number
+  failed: number
+}
+
+export function summarizeExecutionStates(states: Array<Pick<ExecutionRecord, 'state'>>): ExecutionSummary {
+  const summary: ExecutionSummary = {
+    queued: 0,
+    running: 0,
+    waiting_human: 0,
+    completed: 0,
+    blocked: 0,
+    failed: 0,
+  }
+
+  for (const record of states) {
+    if (record.state in summary) {
+      summary[record.state as keyof ExecutionSummary] += 1
+    }
+  }
+
+  return summary
+}
+
 export type QueueCandidate = {
   id: string
   status?: string

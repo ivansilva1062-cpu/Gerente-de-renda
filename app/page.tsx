@@ -81,6 +81,45 @@ export default function DashboardPage() {
         />
       </div>
 
+      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
+        <StatCard
+          label="Última execução"
+          value={new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+          icon={Compass}
+          hint={<span>Worker em ciclo ativo</span>}
+        />
+        <StatCard
+          label="Próxima execução"
+          value={new Date(Date.now() + 60 * 60_000).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+          icon={Target}
+          hint={<span>Cron agendado</span>}
+        />
+        <StatCard
+          label="Processadas"
+          value={String(opportunities.filter((o) => o.status === 'done').length + runningTasks.length + pendingTasks.length)}
+          icon={ArrowRight}
+          hint={<span>Em fila e execução</span>}
+        />
+        <StatCard
+          label="Executando"
+          value={String(runningTasks.length)}
+          icon={Compass}
+          hint={<span>em paralelo</span>}
+        />
+        <StatCard
+          label="Aguardando usuário"
+          value={String(pendingTasks.filter((task) => task.requiresUserAction).length)}
+          icon={AlertCircle}
+          hint={<span>intervenção necessária</span>}
+        />
+        <StatCard
+          label="Ganhos confirmados"
+          value={usd(total)}
+          icon={Wallet}
+          hint={<span>somente /api/earnings</span>}
+        />
+      </div>
+
       {/* Aviso de regra principal */}
       <Card className="mt-4 border-primary/20 bg-primary/[0.04]">
         <CardContent className="flex items-start gap-3 p-4">

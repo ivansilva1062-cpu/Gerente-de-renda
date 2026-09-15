@@ -183,6 +183,19 @@ export function AgentProvider({
       seedIntegrations,
     )
 
+  const [workerCycle, setWorkerCycle] =
+    useState({
+      lastExecutionAt: null as string | null,
+      nextExecutionAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+      processedCount: 0,
+      executingCount: 0,
+      waitingHumanCount: 0,
+      completedCount: 0,
+      blockedCount: 0,
+      failedCount: 0,
+      confirmedEarnings: 0,
+    })
+
   /*
    * ==========================================
    * STATUS REF
@@ -582,6 +595,12 @@ export function AgentProvider({
             })
           }
 
+          setWorkerCycle((previous) => ({
+            ...previous,
+            lastExecutionAt: new Date().toISOString(),
+            nextExecutionAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+          }))
+
           return data
         } catch (error) {
           console.error(
@@ -625,6 +644,26 @@ export function AgentProvider({
         await discover()
       },
       [discover],
+    )
+
+  const refreshWorkerCycleSummary =
+    useCallback(
+      () => {
+        const nextExecutionAt = new Date(Date.now() + 60 * 60_000).toISOString()
+
+        setWorkerCycle((previous) => ({
+          ...previous,
+          nextExecutionAt,
+          processedCount: opportunities.filter((opportunity) => opportunity.status === 'done').length + tasks.filter((task) => task.state === 'done').length,
+          executingCount: runningTasks.length,
+          waitingHumanCount: pendingTasks.filter((task) => task.requiresUserAction || task.pendingReason?.toLowerCase().includes('ação humana') || task.pendingReason?.toLowerCase().includes('cadastro')).length + opportunities.filter((opportunity) => opportunity.requiresUserAction || opportunity.requiresSignup).length,
+          completedCount: opportunities.filter((opportunity) => opportunity.status === 'done').length + tasks.filter((task) => task.state === 'done').length,
+          blockedCount: opportunities.filter((opportunity) => opportunity.managerBlocked).length,
+          failedCount: opportunities.filter((opportunity) => opportunity.status === 'pending' && opportunity.preparationStatus === 'failed').length + tasks.filter((task) => task.preparationStatus === 'failed').length,
+          confirmedEarnings: transactions.reduce((sum, transaction) => sum + transaction.amount, 0),
+        }))
+      },
+      [opportunities, pendingTasks, runningTasks, tasks, transactions],
     )
 
   /*
@@ -1640,6 +1679,10 @@ export function AgentProvider({
    * CONTEXT
    * ==========================================
    */
+
+  useEffect(() => {
+    refreshWorkerCycleSummary()
+  }, [refreshWorkerCycleSummary])
 
   const value:
     AgentContextValue = {
