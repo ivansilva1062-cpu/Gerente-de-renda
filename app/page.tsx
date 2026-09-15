@@ -21,6 +21,7 @@ import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { usd } from '@/lib/format'
+import { ManagerCabin } from '@/components/manager-cabin'
 
 export default function DashboardPage() {
   const { today, total, dailyGoal, opportunities, runningTasks, pendingTasks } = useAgent()
@@ -91,6 +92,8 @@ export default function DashboardPage() {
           </p>
         </CardContent>
       </Card>
+
+      <ManagerCabin />
 
       <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
         {/* Coluna esquerda: tarefas */}

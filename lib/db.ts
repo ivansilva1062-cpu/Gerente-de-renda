@@ -1,7 +1,7 @@
 import { neon } from '@neondatabase/serverless'
 
-if (!process.env.DATABASE_URL) {
-  throw new Error('DATABASE_URL não configurada')
-}
-
-export const sql = neon(process.env.DATABASE_URL)
+export const sql = process.env.DATABASE_URL
+  ? neon(process.env.DATABASE_URL)
+  : (async () => {
+      throw new Error('DATABASE_URL não configurada')
+    }) as ReturnType<typeof neon>
