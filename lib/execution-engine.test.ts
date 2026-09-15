@@ -3,10 +3,12 @@ import test from 'node:test'
 import {
   createExecution,
   pickNextOpportunity,
+  summarizeExecutionStates,
   transitionExecution,
 } from './execution-engine.ts'
 import { decideManagerAction } from './manager-decision.ts'
 import { assessOpportunity, runManagerModules } from './manager-modules.ts'
+import { isAuthorizedWorkerRequest } from './worker-auth.ts'
 
 const approvedOpportunity = {
   title: 'Paid freelance project',
@@ -117,4 +119,110 @@ test('não permite concluir uma execução bloqueada ou parada para humano', () 
   }))
 
   assert.throws(() => transitionExecution(execution, 'completed'), /Transição inválida/)
+})
+
+test('bloqueia uma oportunidade rejeitada pelo Risco antes de entrar na fila', () => {
+  const opportunity = {
+    ...approvedOpportunity,
+    description: 'Get paid $80, but pay to apply with an upfront fee and connect your wallet.',
+  }
+  const assessment = assessOpportunity(opportunity)
+  const execution = createExecution({
+    id: 'risk-blocked',
+    opportunity,
+    modules: assessment.modules,
+    decision: decideManagerAction(assessment.modules, {
+      score: assessment.score,
+      priority: assessment.priority,
+    }),
+    now: '2026-09-15T12:00:00.000Z',
+  })
+
+  assert.equal(assessment.blocked, true)
+  assert.equal(assessment.blockedBy.includes('risco'), true)
+  assert.equal(execution.state, 'blocked')
+})
+
+test('registra falha de execução e impede retomada de estado terminal', () => {
+  const queued = createExecution(context())
+  const running = transitionExecution(queued, 'running', {}, '2026-09-15T12:01:00.000Z')
+  const failed = transitionExecution(running, 'failed', {
+    error: 'Falha controlada ao inspecionar a página oficial.',
+  }, '2026-09-15T12:02:00.000Z')
+
+  assert.equal(failed.state, 'failed')
+  assert.equal(failed.error, 'Falha controlada ao inspecionar a página oficial.')
+  assert.throws(() => transitionExecution(failed, 'running'), /Transição inválida/)
+})
+
+test('mantém waiting_human isolada enquanto seleciona outra oportunidade pronta', () => {
+  const waiting = createExecution(context({
+    ...approvedOpportunity,
+    actionRequired: 'Login e identity verification',
+  }))
+  const next = pickNextOpportunity([
+    { id: waiting.id, status: 'new', managerScore: 99, confidence: 99, estimatedValue: 100 },
+    { id: 'safe', status: 'new', managerScore: 80, confidence: 90, estimatedValue: 40 },
+  ], [waiting.id])
+
+  assert.equal(waiting.state, 'waiting_human')
+  assert.equal(next?.id, 'safe')
+})
+
+test('resume múltiplas execuções sem permitir duplicidade da mesma oportunidade', () => {
+  const opportunities = [
+    { id: 'a', status: 'new', managerScore: 80, confidence: 90, estimatedValue: 20 },
+    { id: 'b', status: 'new', managerScore: 70, confidence: 90, estimatedValue: 30 },
+  ]
+
+  const first = pickNextOpportunity(opportunities)
+  const second = pickNextOpportunity(opportunities, [first?.id ?? ''])
+
+  assert.equal(first?.id, 'a')
+  assert.equal(second?.id, 'b')
+  assert.notEqual(first?.id, second?.id)
+})
+
+test('resume os estados do painel sem confundir estimativa com conclusão', () => {
+  const summary = summarizeExecutionStates([
+    { state: 'queued' },
+    { state: 'running' },
+    { state: 'waiting_human' },
+    { state: 'completed' },
+    { state: 'blocked' },
+    { state: 'failed' },
+    { state: 'waiting_human' },
+  ])
+
+  assert.deepEqual(summary, {
+    queued: 1,
+    running: 1,
+    waiting_human: 2,
+    completed: 1,
+    blocked: 1,
+    failed: 1,
+  })
+})
+
+test('autoriza Worker por sessão ativa ou segredo de cron, mas nunca sem credencial', () => {
+  assert.equal(isAuthorizedWorkerRequest({
+    authorization: null,
+    cronSecret: 'cron-secret',
+    sessionActive: true,
+  }), true)
+  assert.equal(isAuthorizedWorkerRequest({
+    authorization: 'Bearer cron-secret',
+    cronSecret: 'cron-secret',
+    sessionActive: false,
+  }), true)
+  assert.equal(isAuthorizedWorkerRequest({
+    authorization: 'Bearer wrong-secret',
+    cronSecret: 'cron-secret',
+    sessionActive: false,
+  }), false)
+  assert.equal(isAuthorizedWorkerRequest({
+    authorization: null,
+    cronSecret: undefined,
+    sessionActive: false,
+  }), false)
 })

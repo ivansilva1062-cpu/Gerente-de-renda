@@ -13,6 +13,7 @@ import {
 } from '@/lib/execution-engine'
 import { persistExecution } from '@/lib/execution-store'
 import { requestHasActiveSession } from '@/lib/auth-server'
+import { isAuthorizedWorkerRequest } from '@/lib/worker-auth'
 
 /*
  * ==========================================
@@ -739,7 +740,15 @@ async function inspectOpportunity(
 export async function GET(
   request: Request,
 ) {
-  if (!(await requestHasActiveSession())) {
+  const sessionActive = await requestHasActiveSession()
+  const cronSecret = process.env.CRON_SECRET
+  const authorized = isAuthorizedWorkerRequest({
+    authorization: request.headers.get('authorization'),
+    cronSecret,
+    sessionActive,
+  })
+
+  if (!authorized) {
     return NextResponse.json({ success: false, error: 'Autenticação necessária.' }, { status: 401 })
   }
   try {
@@ -748,32 +757,6 @@ export async function GET(
      * SEGURANÇA CRON
      * ======================================
      */
-
-    const cronSecret =
-      process.env.CRON_SECRET
-
-    if (cronSecret) {
-      const authorization =
-        request.headers.get(
-          'authorization',
-        )
-
-      if (
-        authorization !==
-        `Bearer ${cronSecret}`
-      ) {
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              'Não autorizado.',
-          },
-          {
-            status: 401,
-          },
-        )
-      }
-    }
 
     const url =
       new URL(request.url)
