@@ -1,0 +1,26 @@
+{
+  "name": "Gerente de Renda",
+  "short_name": "Gerente",
+  "description": "Painel online para gerenciar oportunidades legítimas de renda.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f8faf9",
+  "theme_color": "#0f2a24",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "/apple-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "180x180",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

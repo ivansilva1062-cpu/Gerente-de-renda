@@ -4,6 +4,7 @@ import { Geist, Geist_Mono } from 'next/font/google'
 import './globals.css'
 import { AgentProvider } from '@/components/agent-provider'
 import { AppShell } from '@/components/app-shell'
+import { PwaRegister } from '@/components/pwa-register'
 
 const geistSans = Geist({
   subsets: ['latin'],
@@ -20,10 +21,21 @@ export const metadata: Metadata = {
   description:
     'Painel pessoal para gerenciar oportunidades legítimas de renda em dólar operadas por um agente autônomo.',
   generator: 'v0.app',
+  manifest: '/manifest.webmanifest',
+  icons: {
+    icon: '/icon.svg',
+    apple: '/apple-icon.png',
+  },
+  appleWebApp: {
+    capable: true,
+    title: 'Gerente de Renda',
+    statusBarStyle: 'black-translucent',
+  },
 }
 
 export const viewport: Viewport = {
   colorScheme: 'light dark',
+  viewportFit: 'cover',
   themeColor: [
     { media: '(prefers-color-scheme: light)', color: '#0f2a24' },
     { media: '(prefers-color-scheme: dark)', color: '#0f2a24' },
@@ -38,6 +50,7 @@ export default function RootLayout({
   return (
     <html lang="pt-BR" className={`${geistSans.variable} ${geistMono.variable} bg-background`}>
       <body className="font-sans antialiased">
+        <PwaRegister />
         <AgentProvider>
           <AppShell>{children}</AppShell>
         </AgentProvider>
