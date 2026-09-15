@@ -7,6 +7,7 @@ import {
   type OpportunityInput,
 } from '@/lib/manager-modules'
 import { decideManagerAction } from '@/lib/manager-decision'
+import { createExecution } from '@/lib/execution-engine'
 
 const pipeline = [
   'radar',
@@ -72,12 +73,19 @@ function orchestrate(candidate: OpportunityInput | null) {
     score: assessment.score,
     priority: assessment.priority,
   })
+  const execution = createExecution({
+    id: `manager-${candidate.url}`,
+    opportunity: candidate,
+    modules,
+    decision,
+  })
 
   return {
     candidate,
     modules,
     assessment,
     decision,
+    execution,
     pipeline,
     rules: {
       estimatedValuesAreNotEarnings: true,
