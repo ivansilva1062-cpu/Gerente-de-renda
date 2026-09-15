@@ -2,22 +2,14 @@ import type {
   ModuleResult,
   OpportunityPriority,
 } from '@/lib/manager-modules'
+import type { OpportunityCategory } from '@/lib/opportunity-catalog'
 
 export type AgentStatus =
   | 'working'
   | 'waiting'
   | 'paused'
 
-export type OpportunityCategory =
-  | 'microtasks'
-  | 'freelance'
-  | 'surveys'
-  | 'content'
-  | 'affiliate'
-  | 'testing'
-  | 'services'
-  | 'sales'
-  | 'other'
+export type { OpportunityCategory }
 
 export type OpportunityStatus =
   | 'new'
@@ -71,6 +63,15 @@ export interface Opportunity {
   managerPriority?: OpportunityPriority
 
   managerBlocked?: boolean
+
+  actionRequired?: string
+  remuneration?: 'verifiable' | 'indicative' | 'missing'
+  accessibility?: 'open' | 'restricted' | 'unknown'
+  effort?: 'low' | 'medium' | 'high'
+  returnLevel?: 'low' | 'medium' | 'high'
+  riskLevel?: 'low' | 'medium' | 'high'
+  riskSignals?: string[]
+  sourceQuality?: 'official' | 'known' | 'unknown'
 
   status: OpportunityStatus
 

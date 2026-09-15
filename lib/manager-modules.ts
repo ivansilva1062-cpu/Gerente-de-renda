@@ -17,6 +17,7 @@ export type OpportunityInput = {
   estimatedValue?: number
   category?: string
   confidence?: number
+  actionRequired?: string
 }
 
 export type EvaluatorDetails = {
@@ -28,6 +29,7 @@ export type EvaluatorDetails = {
   returnLevel: 'low' | 'medium' | 'high'
   sourceQuality: 'official' | 'known' | 'unknown'
   riskSignals: string[]
+  riskLevel: 'low' | 'medium' | 'high'
 }
 
 export type ModuleResult = {
@@ -50,13 +52,21 @@ export type OpportunityAssessment = {
   route: 'blocked' | 'human_review' | 'prepare' | 'monitor'
   blockedBy: ManagerModuleName[]
   modules: ModuleResult[]
+  comparison: {
+    returnScore: number
+    effortScore: number
+    riskScore: number
+    accessibilityScore: number
+    confidenceScore: number
+    rankingScore: number
+  }
 }
 
 const clampScore = (value: number) =>
   Math.min(100, Math.max(0, Math.round(value)))
 
 function hasSensitiveFlow(text: string) {
-  return /senha|password|cartão|card|pix|cripto|crypto|identidade|identity|documento|cpf|cnpj|pague para receber|depósito antecipado/i.test(text)
+  return /senha|password|cartão|card|pix|cripto|crypto|wallet|carteira|identidade|identity|documento|cpf|cnpj|pague para receber|depósito antecipado|upfront fee|pay to apply/i.test(text)
 }
 
 const contentUrlSignals = [
@@ -228,6 +238,7 @@ export function avaliador(input: OpportunityInput): ModuleResult {
     returnLevel,
     sourceQuality,
     riskSignals,
+    riskLevel: riskSignals.length > 0 ? 'high' : action === 'human_required' || accessibility === 'restricted' ? 'medium' : 'low',
   }
   const approved = hasWorkSignal &&
     remuneration !== 'missing' &&
@@ -398,6 +409,20 @@ export function assessOpportunity(input: OpportunityInput): OpportunityAssessmen
         ? 'prepare'
         : 'monitor'
 
+    const evaluation = results.find((result) => result.module === 'avaliador')?.evaluation
+    const returnScore = evaluation?.returnLevel === 'high' ? 90 : evaluation?.returnLevel === 'medium' ? 60 : 25
+    const effortScore = evaluation?.effort === 'low' ? 90 : evaluation?.effort === 'medium' ? 60 : 30
+    const riskScore = evaluation?.riskLevel === 'high' || blocked ? 10 : evaluation?.riskLevel === 'medium' || requiresHumanAction ? 55 : 90
+    const accessibilityScore = evaluation?.accessibility === 'open' ? 90 : evaluation?.accessibility === 'restricted' ? 20 : 45
+    const confidenceScore = clampScore(Number(input.confidence ?? 0))
+    const rankingScore = clampScore(
+      returnScore * 0.4 +
+        effortScore * 0.25 +
+        riskScore * 0.2 +
+        accessibilityScore * 0.1 +
+        confidenceScore * 0.05,
+    )
+
   return {
     score,
     priority,
@@ -407,5 +432,25 @@ export function assessOpportunity(input: OpportunityInput): OpportunityAssessmen
     route,
     blockedBy,
     modules: results,
+    comparison: {
+      returnScore,
+      effortScore,
+      riskScore,
+      accessibilityScore,
+      confidenceScore,
+      rankingScore,
+    },
   }
+}
+
+export function rankOpportunities(inputs: OpportunityInput[]) {
+  return inputs
+    .map((input) => ({ input, assessment: assessOpportunity(input) }))
+    .sort((left, right) => {
+      if (left.assessment.blocked !== right.assessment.blocked) {
+        return left.assessment.blocked ? 1 : -1
+      }
+
+      return right.assessment.comparison.rankingScore - left.assessment.comparison.rankingScore
+    })
 }

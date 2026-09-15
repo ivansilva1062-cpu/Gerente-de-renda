@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { sql } from '@/lib/db'
 import {
   assessOpportunity,
+  rankOpportunities,
   runManagerModules,
   type OpportunityInput,
 } from '@/lib/manager-modules'
@@ -25,6 +26,8 @@ async function latestCandidate() {
         url,
         description,
         source,
+        category,
+        confidence,
         estimated_value
       FROM opportunities
       WHERE title IS NOT NULL
@@ -33,17 +36,18 @@ async function latestCandidate() {
       LIMIT 20
     `
 
-    return result
-      .map((row) => ({
-        title: String(row.title ?? ''),
-        url: String(row.url ?? ''),
-        description: String(row.description ?? ''),
-        source: String(row.source ?? ''),
-        estimatedValue: Number(row.estimated_value ?? 0),
-      }))
-      .map((candidate) => ({ candidate, assessment: assessOpportunity(candidate) }))
-      .sort((left, right) => right.assessment.score - left.assessment.score)
-      .at(0)?.candidate ?? null
+    const rows = result as Array<Record<string, unknown>>
+    const ranked = rankOpportunities(rows.map((row) => ({
+      title: String(row.title ?? ''),
+      url: String(row.url ?? ''),
+      description: String(row.description ?? ''),
+      source: String(row.source ?? ''),
+      category: String(row.category ?? ''),
+      confidence: Number(row.confidence ?? 0),
+      estimatedValue: Number(row.estimated_value ?? 0),
+    })))
+
+    return ranked.at(0)?.input ?? null
   } catch (error) {
     console.error('Erro ao consultar candidata do gerente:', error)
     return null
