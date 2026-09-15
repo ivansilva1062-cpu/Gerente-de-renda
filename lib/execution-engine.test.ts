@@ -73,6 +73,24 @@ test('interrompe exatamente antes de ação sensível e registra intervenção h
   assert.match(execution.intervention?.action ?? '', /não enviará dados/)
 })
 
+test('permite retomar uma execução após intervenção humana e continuar automaticamente', () => {
+  const execution = createExecution(context({
+    ...approvedOpportunity,
+    actionRequired: 'Login e identity verification',
+  }))
+
+  assert.equal(execution.state, 'waiting_human')
+
+  const resumed = transitionExecution(execution, 'queued', {
+    intervention: execution.intervention,
+  }, '2026-09-15T12:03:00.000Z')
+
+  const running = transitionExecution(resumed, 'running', {}, '2026-09-15T12:04:00.000Z')
+
+  assert.equal(running.state, 'running')
+  assert.equal(running.intervention?.required, true)
+})
+
 test('não permite concluir uma execução bloqueada ou parada para humano', () => {
   const execution = createExecution(context({
     ...approvedOpportunity,

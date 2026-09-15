@@ -111,7 +111,7 @@ export function createExecution(context: ExecutionContext): ExecutionRecord {
 const transitions: Record<ExecutionState, ExecutionState[]> = {
   queued: ['running', 'waiting_human', 'blocked', 'failed'],
   running: ['completed', 'waiting_human', 'blocked', 'failed'],
-  waiting_human: [],
+  waiting_human: ['queued', 'running', 'blocked', 'failed'],
   completed: [],
   blocked: [],
   failed: [],
