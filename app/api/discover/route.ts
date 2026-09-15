@@ -800,6 +800,7 @@ async function saveOpportunity(
   const assessment = assessOpportunity({
     title,
     url,
+    source,
     description: `${source} ${category} ${content}`,
     estimatedValue,
     confidence,

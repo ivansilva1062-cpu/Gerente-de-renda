@@ -75,6 +75,10 @@ export function ManagerCabin() {
     )
   }
 
+  const evaluation = data.modules.find(
+    (module) => module.module === 'avaliador',
+  )?.evaluation
+
   return (
     <Card className="mt-6 overflow-hidden border-primary/20">
       <CardHeader className="border-b border-border/70 bg-primary/[0.04]">
@@ -115,6 +119,28 @@ export function ManagerCabin() {
             </div>
           ))}
         </div>
+
+        {evaluation ? (
+          <div className="rounded-lg border border-border/70 bg-muted/20 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-medium">Leitura profunda do Avaliador</p>
+              <span className="font-mono text-sm tabular-nums">{evaluation.score}/100</span>
+            </div>
+            <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3 lg:grid-cols-6">
+              <span>Remuneração: <strong className="text-foreground">{evaluation.remuneration}</strong></span>
+              <span>Ação: <strong className="text-foreground">{evaluation.action}</strong></span>
+              <span>Acesso: <strong className="text-foreground">{evaluation.accessibility}</strong></span>
+              <span>Esforço: <strong className="text-foreground">{evaluation.effort}</strong></span>
+              <span>Retorno: <strong className="text-foreground">{evaluation.returnLevel}</strong></span>
+              <span>Fonte: <strong className="text-foreground">{evaluation.sourceQuality}</strong></span>
+            </div>
+            {evaluation.riskSignals.length > 0 ? (
+              <p className="mt-3 text-xs text-warning-foreground">
+                Sinais para revisão: {evaluation.riskSignals.join(', ')}.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
           <span className="flex items-center gap-2"><ShieldCheck className="size-4 text-success" /> Estimativa não é ganho</span>

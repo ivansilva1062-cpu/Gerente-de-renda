@@ -94,6 +94,7 @@ export async function POST(request: Request) {
       title: String(body.title ?? ''),
       url: String(body.url ?? ''),
       description: body.description,
+      source: body.source,
       estimatedValue: Number(body.estimatedValue ?? 0),
       category: body.category,
       confidence: Number(body.confidence ?? 0),

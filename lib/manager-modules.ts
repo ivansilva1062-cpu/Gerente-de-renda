@@ -13,9 +13,21 @@ export type OpportunityInput = {
   title: string
   url: string
   description?: string
+  source?: string
   estimatedValue?: number
   category?: string
   confidence?: number
+}
+
+export type EvaluatorDetails = {
+  score: number
+  remuneration: 'verifiable' | 'indicative' | 'missing'
+  action: 'clear' | 'human_required' | 'unclear'
+  accessibility: 'open' | 'restricted' | 'unknown'
+  effort: 'low' | 'medium' | 'high'
+  returnLevel: 'low' | 'medium' | 'high'
+  sourceQuality: 'official' | 'known' | 'unknown'
+  riskSignals: string[]
 }
 
 export type ModuleResult = {
@@ -26,6 +38,7 @@ export type ModuleResult = {
   scoreImpact?: number
   blocked?: boolean
   requiresHumanAction?: boolean
+  evaluation?: EvaluatorDetails
 }
 
 export type OpportunityAssessment = {
@@ -104,6 +117,10 @@ function containsAny(text: string, signals: string[]) {
   return signals.some((signal) => text.includes(signal))
 }
 
+function countAny(text: string, signals: string[]) {
+  return signals.filter((signal) => text.includes(signal)).length
+}
+
 export function isInformationalContent(input: Pick<OpportunityInput, 'title' | 'url' | 'description'>) {
   const title = input.title.toLowerCase()
   const url = input.url.toLowerCase()
@@ -149,21 +166,82 @@ export function radar(input: OpportunityInput): ModuleResult {
 export function avaliador(input: OpportunityInput): ModuleResult {
   const text = `${input.title} ${input.description ?? ''} ${input.category ?? ''}`.toLowerCase()
   const hasWorkSignal = /trabalho|task|tarefa|survey|pesquisa|teste|freelance|serviço|service|job|microtask|gig|gigwork/.test(text)
-  const hasPaymentSignal = /paid|pago|pagamento|reward|recompensa|earn|ganhe|dollar|dólar|usd|\$/.test(text) || Number(input.estimatedValue ?? 0) > 0
+  const hasPaymentSignal = /paid|pago|pagamento|reward|recompensa|earn|ganhe|dollar|dólar|usd|\$|compensation|salary|hourly rate|per task|per study|per test|per survey/.test(text)
   const hasConcreteAction = containsAny(text, concreteOpportunitySignals)
   const hasClearTask = Boolean(input.title && input.description)
-  const approved = hasWorkSignal && hasPaymentSignal && hasConcreteAction && !isInformationalContent(input)
+  const remuneration = /per task|per study|per test|per survey|hourly rate|salary|compensation|paid \$|\$\s*\d|usd\s*\d|\d\s*usd/.test(text)
+    ? 'verifiable'
+    : hasPaymentSignal || Number(input.estimatedValue ?? 0) > 0
+      ? 'indicative'
+      : 'missing'
+  const action = hasConcreteAction
+    ? /captcha|identity|identidade|cadastro|login|senha|documento|autenticação|verification|verificação/.test(text)
+      ? 'human_required'
+      : 'clear'
+    : 'unclear'
+  const accessibility = !input.url
+    ? 'unknown'
+    : /invite only|invitation only|residents only|us only|uk only|available in|waitlist|lista de espera/.test(text)
+      ? 'restricted'
+      : 'open'
+  const effort = countAny(text, ['qualification', 'qualify', 'training', 'multiple steps', 'long survey', 'interview', 'portfolio', 'teste técnico', 'technical test']) >= 2
+    ? 'high'
+    : countAny(text, ['survey', 'pesquisa', 'task', 'tarefa', 'test', 'teste', 'profile', 'cadastro']) >= 1
+      ? 'medium'
+      : 'low'
+  const returnLevel = remuneration === 'verifiable' && Number(input.estimatedValue ?? 0) >= 50
+    ? 'high'
+    : remuneration === 'verifiable' || Number(input.estimatedValue ?? 0) > 0
+      ? 'medium'
+      : 'low'
+  const sourceQuality = input.source && /\.(gov|edu)(\.|$)/i.test(input.source)
+    ? 'official'
+    : input.source || input.url.startsWith('https://')
+      ? 'known'
+      : 'unknown'
+  const riskSignals = [
+    /pague para receber|depósito antecipado|upfront fee|pay to apply/.test(text) ? 'cobrança antecipada' : '',
+    /cripto|crypto|wallet|carteira/.test(text) ? 'fluxo cripto' : '',
+    /senha|password|cartão|card|pix|documento|cpf|identity|identidade/.test(text) ? 'dado sensível' : '',
+  ].filter(Boolean)
+  const evaluationScore = Math.max(0, Math.min(100, Math.round(
+    (hasWorkSignal ? 15 : 0) +
+      (remuneration === 'verifiable' ? 25 : remuneration === 'indicative' ? 10 : 0) +
+      (action === 'clear' ? 20 : action === 'human_required' ? 10 : 0) +
+      (accessibility === 'open' ? 10 : accessibility === 'restricted' ? 3 : 0) +
+      (returnLevel === 'high' ? 15 : returnLevel === 'medium' ? 8 : 2) +
+      (effort === 'low' ? 10 : effort === 'medium' ? 6 : 2) +
+      (sourceQuality === 'official' ? 5 : sourceQuality === 'known' ? 3 : 0) -
+      riskSignals.length * 20,
+  )))
+  const evaluation: EvaluatorDetails = {
+    score: evaluationScore,
+    remuneration,
+    action,
+    accessibility,
+    effort,
+    returnLevel,
+    sourceQuality,
+    riskSignals,
+  }
+  const approved = hasWorkSignal &&
+    remuneration !== 'missing' &&
+    action !== 'unclear' &&
+    accessibility !== 'restricted' &&
+    evaluationScore >= 55 &&
+    !isInformationalContent(input)
 
   return {
     module: 'avaliador',
     approved,
     reason: approved
-      ? 'Há sinais concretos de ação, trabalho e remuneração.'
-      : 'Sinais insuficientes para aprovação automática.',
-    nextAction: hasWorkSignal && hasPaymentSignal ? 'Enviar para o Risco.' : 'Revisar clareza da tarefa e remuneração.',
-    scoreImpact: approved ? 25 + (hasClearTask ? 10 : 0) : -15,
+      ? `Avaliação ${evaluationScore}/100: remuneração ${remuneration === 'verifiable' ? 'verificável' : 'indicada'}, retorno ${returnLevel} e esforço ${effort}.`
+      : `Avaliação ${evaluationScore}/100: revisar remuneração, ação, acessibilidade, esforço/retorno ou fonte antes de preparar.`,
+    nextAction: approved ? 'Enviar para o Risco.' : 'Manter em monitoramento; não preparar até melhorar a evidência.',
+    scoreImpact: approved ? 25 + (hasClearTask ? 10 : 0) : -20,
     blocked: false,
-    requiresHumanAction: false,
+    requiresHumanAction: action === 'human_required',
+    evaluation,
   }
 }
 

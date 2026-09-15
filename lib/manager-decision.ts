@@ -60,6 +60,20 @@ export function decideManagerAction(
     }
   }
 
+  const evaluator = modules.find((module) => module.module === 'avaliador')
+
+  if (evaluator && !evaluator.approved) {
+    return {
+      decision: 'monitor',
+      reason: 'O Avaliador não encontrou evidência suficiente de retorno, acessibilidade ou ação concreta.',
+      nextAction: 'Continuar monitorando sem preparar a oportunidade até haver evidência verificável.',
+      blockedBy,
+      requiresHumanAction: false,
+      estimatedValuesAreNotEarnings: true,
+      sensitiveActionsRequireHuman: true,
+    }
+  }
+
   const isReadyToPrepare =
     context.priority === 'high' ||
     Number(context.score ?? 0) >= 75
