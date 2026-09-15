@@ -5,6 +5,13 @@ import Browserbase from '@browserbasehq/sdk'
 import { sql } from '@/lib/db'
 import { assessOpportunity } from '@/lib/manager-modules'
 import { decideManagerAction } from '@/lib/manager-decision'
+import {
+  createExecution,
+  isSensitiveAction,
+  sensitiveActionReason,
+  transitionExecution,
+} from '@/lib/execution-engine'
+import { persistExecution } from '@/lib/execution-store'
 
 /*
  * ==========================================
@@ -42,6 +49,8 @@ type OpportunityRow = {
   confidence: number | string
   status: string
   url: string | null
+  description?: string
+  action_required?: string
   requires_signup: boolean
   requires_user_action: boolean
 }
@@ -227,6 +236,8 @@ async function getOpportunity(
         title,
         source,
         category,
+        description,
+        action_required,
         estimated_value,
         confidence,
         status,
@@ -254,14 +265,17 @@ async function getOpportunity(
 async function inspectOpportunity(
   opportunity: OpportunityRow,
 ) {
-  const assessment = assessOpportunity({
+  const executionOpportunity = {
     title: opportunity.title,
     url: opportunity.url ?? '',
-    description: `${opportunity.source} ${opportunity.category}`,
+    description: opportunity.description ?? `${opportunity.source} ${opportunity.category}`,
+    actionRequired: opportunity.action_required ?? (opportunity.requires_signup ? 'Cadastro necessário' : undefined),
     estimatedValue: Number(opportunity.estimated_value ?? 0),
     confidence: Number(opportunity.confidence ?? 0),
     category: opportunity.category,
-  })
+    source: opportunity.source,
+  }
+  const assessment = assessOpportunity(executionOpportunity)
   const managerDecision = decideManagerAction(
     assessment.modules,
     {
@@ -269,24 +283,33 @@ async function inspectOpportunity(
       priority: assessment.priority,
     },
   )
+  let execution = createExecution({
+    id: `execution-${opportunity.id}`,
+    opportunity: executionOpportunity,
+    modules: assessment.modules,
+    decision: managerDecision,
+  })
 
-  if (managerDecision.decision === 'block') {
+  await persistExecution(execution)
+
+  if (execution.state !== 'queued') {
     await sql`
       UPDATE opportunities
       SET
         status = 'pending',
         manager_score = ${assessment.score},
         manager_priority = ${assessment.priority},
-        manager_blocked = TRUE
+        manager_blocked = ${execution.state === 'blocked'}
       WHERE id = ${opportunity.id}
     `
 
     return {
-      success: false,
-      state: 'pending',
+      success: execution.state === 'waiting_human',
+      state: execution.state,
       reason: assessment.summary,
       assessment,
       managerDecision,
+      execution,
     }
   }
 
@@ -300,18 +323,16 @@ async function inspectOpportunity(
       opportunity.url,
     )
   ) {
-    await sql`
-      UPDATE opportunities
-      SET
-        status = 'pending'
-      WHERE id = ${opportunity.id}
-    `
+    execution = transitionExecution(execution, 'failed', {
+      error: 'A oportunidade não possui uma URL válida.',
+    })
+    await persistExecution(execution)
 
     return {
       success: false,
-      state: 'pending',
-      reason:
-        'A oportunidade não possui uma URL válida.',
+      state: execution.state,
+      reason: execution.error,
+      execution,
     }
   }
 
@@ -326,9 +347,18 @@ async function inspectOpportunity(
       .BROWSERBASE_API_KEY
 
   if (!apiKey) {
-    throw new Error(
-      'BROWSERBASE_API_KEY não configurada na Vercel.',
-    )
+    execution = transitionExecution(execution, 'running')
+    execution = transitionExecution(execution, 'failed', {
+      error: 'BROWSERBASE_API_KEY não configurada; nenhuma ação externa foi executada.',
+    })
+    await persistExecution(execution)
+
+    return {
+      success: false,
+      state: execution.state,
+      reason: execution.error,
+      execution,
+    }
   }
 
   /*
@@ -349,6 +379,9 @@ async function inspectOpportunity(
 
   const session =
     await bb.sessions.create()
+
+  execution = transitionExecution(execution, 'running')
+  await persistExecution(execution)
 
   let browser:
     Awaited<
@@ -479,7 +512,9 @@ async function inspectOpportunity(
       opportunity.requires_user_action ||
       opportunity.requires_signup ||
       humanSignals.length >
-        0
+        0 ||
+      paymentSignals.length > 0 ||
+      isSensitiveAction(cleanedText)
     const finalManagerDecision = decideManagerAction(
       assessment.modules,
       {
@@ -490,17 +525,39 @@ async function inspectOpportunity(
       },
     )
 
+    const sensitiveReason = requiresHuman
+      ? sensitiveActionReason({
+          title: opportunity.title,
+          description: `${cleanedText} ${paymentSignals.join(' ')}`,
+          actionRequired: opportunity.action_required,
+        }) ?? 'A fonte oficial exige uma intervenção humana antes da próxima etapa.'
+      : undefined
+
+    execution = requiresHuman
+      ? transitionExecution(execution, 'waiting_human', {
+          intervention: {
+            required: true,
+            reason: sensitiveReason,
+            action: 'Abra a fonte oficial, revise a etapa indicada e execute ou autorize somente o que você decidir. O agente não clicou, não enviou dados e não confirmou pagamento.',
+            url: page.url(),
+          },
+        })
+      : transitionExecution(execution, 'completed', {
+          evidence: `Página oficial acessada e preparada sem autenticação, envio de dados ou confirmação financeira: ${pageTitle}`,
+        })
+
+    await persistExecution(execution)
+
     await sql`
       UPDATE opportunities
-      SET
-        status = 'pending'
+      SET status = 'pending'
       WHERE id = ${opportunity.id}
     `
 
     return {
-      success: true,
+      success: execution.state !== 'failed',
 
-      state: 'pending',
+      state: execution.state,
 
       opportunity: {
         id:
@@ -558,10 +615,12 @@ async function inspectOpportunity(
 
       managerDecision: finalManagerDecision,
 
+      execution,
+
       nextAction:
         requiresHuman
           ? 'Aguardando ação do usuário na fonte oficial.'
-          : 'Página analisada. A execução externa ainda precisa de confirmação oficial.',
+          : 'Preparação segura concluída. Nenhum ganho foi confirmado.',
     }
   } finally {
     /*

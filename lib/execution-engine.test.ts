@@ -2,12 +2,12 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createExecution, transitionExecution } from './execution-engine.ts'
 import { decideManagerAction } from './manager-decision.ts'
-import { runManagerModules } from './manager-modules.ts'
+import { assessOpportunity, runManagerModules } from './manager-modules.ts'
 
 const approvedOpportunity = {
-  title: 'Paid freelance job apply now',
-  url: 'https://work.example.com/apply',
-  description: 'Get paid $80 per project with a clear remote task.',
+  title: 'Paid freelance project',
+  url: 'https://work.example.com/projects',
+  description: 'Get paid $80 per project. Service request available with a clear remote task.',
   source: 'work.example.com',
   category: 'freelance',
   estimatedValue: 80,
@@ -16,7 +16,11 @@ const approvedOpportunity = {
 
 function context(opportunity = approvedOpportunity) {
   const modules = runManagerModules(opportunity)
-  const decision = decideManagerAction(modules, { score: 100, priority: 'high' })
+  const assessment = assessOpportunity(opportunity)
+  const decision = decideManagerAction(modules, {
+    score: assessment.score,
+    priority: assessment.priority,
+  })
 
   return {
     id: 'execution-1',
@@ -26,6 +30,24 @@ function context(opportunity = approvedOpportunity) {
     now: '2026-09-15T12:00:00.000Z',
   }
 }
+
+test('integra a decisão aprovada do Gerente ao início do Execution Engine', () => {
+  const assessment = assessOpportunity(approvedOpportunity)
+  const decision = decideManagerAction(assessment.modules, {
+    score: assessment.score,
+    priority: assessment.priority,
+  })
+  const execution = createExecution({
+    id: 'integration-1',
+    opportunity: approvedOpportunity,
+    modules: assessment.modules,
+    decision,
+    now: '2026-09-15T12:00:00.000Z',
+  })
+
+  assert.equal(decision.decision, 'prepare')
+  assert.equal(execution.state, 'queued')
+})
 
 test('cria execução aprovada na fila e permite concluir uma ação segura', () => {
   const queued = createExecution(context())

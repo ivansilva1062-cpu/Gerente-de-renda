@@ -36,7 +36,7 @@ export type ExecutionContext = {
   now?: string
 }
 
-const SENSITIVE_ACTION = /login|log in|sign in|senha|password|credential|credencial|cadastro|register|sign up|signup|identity|identidade|kyc|documento|document|cpf|cnpj|cart[aã]o|card|pagamento|payment|pay to|pix|saque|withdraw|wallet|carteira|captcha|autentica[cç][aã]o|verification|verifica[cç][aã]o/i
+const SENSITIVE_ACTION = /login|log in|sign in|senha|password|credential|credencial|cadastro|register|sign up|signup|identity|identidade|kyc|documento|document|cpf|cnpj|cart[aã]o|card|pagamento|payment|pay to|pix|saque|withdraw|wallet|carteira|captcha|autentica[cç][aã]o|verification|verifica[cç][aã]o|apply now|submit application|complete your profile|take the test|complete the test|complete the survey|participate in the study|accept the task|claim task|payout/i
 
 export function isSensitiveAction(value: string) {
   return SENSITIVE_ACTION.test(value)
