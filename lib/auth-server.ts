@@ -28,6 +28,46 @@ function origin() {
   return process.env.WEBAUTHN_ORIGIN ?? 'http://localhost:3000'
 }
 
+function requestWebAuthnConfig(request: Request) {
+  const requestOrigin = request.headers.get('origin')?.trim()
+
+  if (requestOrigin) {
+    const parsed = new URL(requestOrigin)
+    return {
+      origin: parsed.origin,
+      rpID: parsed.hostname,
+    }
+  }
+
+  const forwardedHost = request.headers
+    .get('x-forwarded-host')
+    ?.split(',')[0]
+    .trim()
+
+  const forwardedProto =
+    request.headers
+      .get('x-forwarded-proto')
+      ?.split(',')[0]
+      .trim() || 'https'
+
+  if (forwardedHost) {
+    const forwardedOrigin = `${forwardedProto}://${forwardedHost}`
+    const parsed = new URL(forwardedOrigin)
+
+    return {
+      origin: parsed.origin,
+      rpID: parsed.hostname,
+    }
+  }
+
+  const parsed = new URL(request.url)
+
+  return {
+    origin: parsed.origin,
+    rpID: parsed.hostname,
+  }
+}
+
 function sessionSecret() {
   const secret = process.env.AUTH_SESSION_SECRET
   if (!secret) throw new Error('AUTH_SESSION_SECRET não configurado.')
@@ -142,16 +182,20 @@ export async function hasCredential() {
   return rows.length > 0
 }
 
-export async function registrationOptions() {
+export async function registrationOptions(request: Request) {
   await ensureAuthTables()
+
+  const config = requestWebAuthnConfig(request)
+
   const credentials = await sql`
     SELECT credential_id, transports
     FROM webauthn_credentials
     WHERE user_id = ${AUTH_USER_ID}
   `
+
   const options = await generateRegistrationOptions({
     rpName: 'Gerente de Renda',
-    rpID: rpId(),
+    rpID: config.rpID,
     userID: isoUint8Array.fromUTF8String(AUTH_USER_ID),
     userName: 'proprietario@gerente-de-renda',
     userDisplayName: 'Proprietário do Gerente de Renda',
@@ -165,23 +209,40 @@ export async function registrationOptions() {
       transports: Array.isArray(credential.transports) ? credential.transports : undefined,
     })),
   })
+
   await saveChallenge('registration', options.challenge)
+
   return options
 }
 
-export async function verifyRegistration(response: RegistrationResponseJSON) {
+export async function verifyRegistration(
+  request: Request,
+  response: RegistrationResponseJSON,
+) {
   await ensureAuthTables()
+
+  const config = requestWebAuthnConfig(request)
+
   const expectedChallenge = await consumeChallenge('registration')
-  if (!expectedChallenge) throw new Error('Desafio de cadastro expirado ou já utilizado.')
+
+  if (!expectedChallenge) {
+    throw new Error('Desafio de cadastro expirado ou já utilizado.')
+  }
+
   const verification = await verifyRegistrationResponse({
     response,
     expectedChallenge,
-    expectedOrigin: origin(),
-    expectedRPID: rpId(),
+    expectedOrigin: config.origin,
+    expectedRPID: config.rpID,
   })
-  if (!verification.verified || !verification.registrationInfo) throw new Error('A passkey não foi verificada.')
 
-  const { credential, credentialDeviceType, credentialBackedUp } = verification.registrationInfo
+  if (!verification.verified || !verification.registrationInfo) {
+    throw new Error('A passkey não foi verificada.')
+  }
+
+  const { credential, credentialDeviceType, credentialBackedUp } =
+    verification.registrationInfo
+
   await sql`
     INSERT INTO webauthn_credentials (
       credential_id, user_id, public_key, counter, transports, device_type, backed_up
@@ -195,21 +256,35 @@ export async function verifyRegistration(response: RegistrationResponseJSON) {
   `
 }
 
-export async function authenticationOptions() {
+export async function authenticationOptions(request: Request) {
   await ensureAuthTables()
+
+  const config = requestWebAuthnConfig(request)
+
   const options = await generateAuthenticationOptions({
-    rpID: rpId(),
+    rpID: config.rpID,
     userVerification: 'required',
     allowCredentials: [],
   })
+
   await saveChallenge('authentication', options.challenge)
+
   return options
 }
 
-export async function verifyAuthentication(response: AuthenticationResponseJSON) {
+export async function verifyAuthentication(
+  request: Request,
+  response: AuthenticationResponseJSON,
+) {
   await ensureAuthTables()
+
+  const config = requestWebAuthnConfig(request)
+
   const expectedChallenge = await consumeChallenge('authentication')
-  if (!expectedChallenge) throw new Error('Desafio de autenticação expirado ou já utilizado.')
+
+  if (!expectedChallenge) {
+    throw new Error('Desafio de autenticação expirado ou já utilizado.')
+  }
 
   const rows = await sql`
     SELECT credential_id, public_key, counter, transports
@@ -217,14 +292,18 @@ export async function verifyAuthentication(response: AuthenticationResponseJSON)
     WHERE credential_id = ${response.id} AND user_id = ${AUTH_USER_ID}
     LIMIT 1
   `
+
   const credential = rows[0] as Record<string, unknown> | undefined
-  if (!credential) throw new Error('Passkey não cadastrada neste Gerente.')
+
+  if (!credential) {
+    throw new Error('Passkey não cadastrada neste Gerente.')
+  }
 
   const verification = await verifyAuthenticationResponse({
     response,
     expectedChallenge,
-    expectedOrigin: origin(),
-    expectedRPID: rpId(),
+    expectedOrigin: config.origin,
+    expectedRPID: config.rpID,
     credential: {
       id: String(credential.credential_id),
       publicKey: Buffer.from(String(credential.public_key), 'base64url'),
@@ -232,7 +311,10 @@ export async function verifyAuthentication(response: AuthenticationResponseJSON)
       transports: Array.isArray(credential.transports) ? credential.transports : undefined,
     },
   })
-  if (!verification.verified) throw new Error('A autenticação da passkey falhou.')
+
+  if (!verification.verified) {
+    throw new Error('A autenticação da passkey falhou.')
+  }
 
   await sql`
     UPDATE webauthn_credentials
@@ -243,46 +325,77 @@ export async function verifyAuthentication(response: AuthenticationResponseJSON)
 
 export async function createSession() {
   await ensureAuthTables()
+
   const token = `${randomBytes(32).toString('base64url')}.${Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS}`
+
   await sql`
     INSERT INTO auth_sessions (token_hash, expires_at)
     VALUES (${tokenHash(token)}, NOW() + INTERVAL '8 hours')
   `
-  return { value: sessionCookieValue(token), maxAge: SESSION_TTL_SECONDS }
+
+  return {
+    value: sessionCookieValue(token),
+    maxAge: SESSION_TTL_SECONDS,
+  }
 }
 
 function clampIdleTimeout(value: number) {
-  return Math.min(MAX_IDLE_TIMEOUT_SECONDS, Math.max(MIN_IDLE_TIMEOUT_SECONDS, Math.round(value)))
+  return Math.min(
+    MAX_IDLE_TIMEOUT_SECONDS,
+    Math.max(MIN_IDLE_TIMEOUT_SECONDS, Math.round(value)),
+  )
 }
 
 export async function getIdleTimeoutSeconds() {
   await ensureAuthTables()
-  const rows = await sql`SELECT idle_timeout_seconds FROM auth_settings WHERE id = TRUE`
-  return clampIdleTimeout(Number(rows[0]?.idle_timeout_seconds ?? DEFAULT_IDLE_TIMEOUT_SECONDS))
+
+  const rows = await sql`
+    SELECT idle_timeout_seconds
+    FROM auth_settings
+    WHERE id = TRUE
+  `
+
+  return clampIdleTimeout(
+    Number(rows[0]?.idle_timeout_seconds ?? DEFAULT_IDLE_TIMEOUT_SECONDS),
+  )
 }
 
 export async function updateIdleTimeoutSeconds(value: number) {
   const seconds = clampIdleTimeout(value)
+
   await ensureAuthTables()
+
   await sql`
     UPDATE auth_settings
     SET idle_timeout_seconds = ${seconds}, updated_at = NOW()
     WHERE id = TRUE
   `
+
   return seconds
 }
 
 export async function revokeSession(value: string | undefined) {
   if (!value || !isValidSessionCookie(value)) return
+
   const session = splitSession(value)
-  if (session) await sql`DELETE FROM auth_sessions WHERE token_hash = ${tokenHash(session.token)}`
+
+  if (session) {
+    await sql`
+      DELETE FROM auth_sessions
+      WHERE token_hash = ${tokenHash(session.token)}
+    `
+  }
 }
 
 export async function sessionIsActive(value: string | undefined) {
   if (!value || !isValidSessionCookie(value)) return false
+
   const session = splitSession(value)
+
   if (!session) return false
+
   const idleTimeoutSeconds = await getIdleTimeoutSeconds()
+
   const rows = await sql`
     SELECT token_hash, last_seen_at, expires_at
     FROM auth_sessions
@@ -291,6 +404,7 @@ export async function sessionIsActive(value: string | undefined) {
       AND last_seen_at > NOW() - (${idleTimeoutSeconds} * INTERVAL '1 second')
     LIMIT 1
   `
+
   return rows.length > 0
 }
 
@@ -300,11 +414,27 @@ export async function requestHasActiveSession() {
 
 export async function sessionStatus(value: string | undefined) {
   const idleTimeoutSeconds = await getIdleTimeoutSeconds()
+
   if (!value || !isValidSessionCookie(value)) {
-    return { active: false, idleTimeoutSeconds, lastSeenAt: null, expiresAt: null }
+    return {
+      active: false,
+      idleTimeoutSeconds,
+      lastSeenAt: null,
+      expiresAt: null,
+    }
   }
+
   const session = splitSession(value)
-  if (!session) return { active: false, idleTimeoutSeconds, lastSeenAt: null, expiresAt: null }
+
+  if (!session) {
+    return {
+      active: false,
+      idleTimeoutSeconds,
+      lastSeenAt: null,
+      expiresAt: null,
+    }
+  }
+
   const rows = await sql`
     SELECT last_seen_at, expires_at
     FROM auth_sessions
@@ -313,6 +443,7 @@ export async function sessionStatus(value: string | undefined) {
       AND last_seen_at > NOW() - (${idleTimeoutSeconds} * INTERVAL '1 second')
     LIMIT 1
   `
+
   return {
     active: rows.length > 0,
     idleTimeoutSeconds,
@@ -323,9 +454,13 @@ export async function sessionStatus(value: string | undefined) {
 
 export async function touchSession(value: string | undefined) {
   if (!value || !isValidSessionCookie(value)) return false
+
   const session = splitSession(value)
+
   if (!session) return false
+
   const idleTimeoutSeconds = await getIdleTimeoutSeconds()
+
   const rows = await sql`
     UPDATE auth_sessions
     SET last_seen_at = NOW()
@@ -334,5 +469,6 @@ export async function touchSession(value: string | undefined) {
       AND last_seen_at > NOW() - (${idleTimeoutSeconds} * INTERVAL '1 second')
     RETURNING token_hash
   `
+
   return rows.length > 0
 }
