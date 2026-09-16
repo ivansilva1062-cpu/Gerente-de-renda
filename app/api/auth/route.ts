@@ -55,10 +55,10 @@ export async function POST(request: Request) {
 
     if (body.action === 'registration-options') {
       if (await hasCredential()) return NextResponse.json({ success: false, error: 'Este Gerente já possui uma passkey.' }, { status: 409 })
-      return NextResponse.json(await registrationOptions())
+      return NextResponse.json(await registrationOptions(request))
     }
     if (body.action === 'registration-verify') {
-      await verifyRegistration(body.response as RegistrationResponseJSON)
+      await verifyRegistration(request, body.response as RegistrationResponseJSON)
       const session = await createSession()
       cookieStore.set(AUTH_COOKIE, session.value, {
         httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict',
@@ -68,10 +68,10 @@ export async function POST(request: Request) {
     }
     if (body.action === 'authentication-options') {
       if (!(await hasCredential())) return NextResponse.json({ success: false, error: 'Cadastre a primeira passkey.' }, { status: 409 })
-      return NextResponse.json(await authenticationOptions())
+      return NextResponse.json(await authenticationOptions(request))
     }
     if (body.action === 'authentication-verify') {
-      await verifyAuthentication(body.response as AuthenticationResponseJSON)
+      await verifyAuthentication(request, body.response as AuthenticationResponseJSON)
       const session = await createSession()
       cookieStore.set(AUTH_COOKIE, session.value, {
         httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict',
