@@ -7,6 +7,7 @@ import {
   verifyAuthenticationResponse,
   verifyRegistrationResponse,
 } from '@simplewebauthn/server'
+import { isoUint8Array } from '@simplewebauthn/server/helpers'
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/types'
 import { cookies } from 'next/headers'
 import { sql } from './db'
@@ -151,7 +152,7 @@ export async function registrationOptions() {
   const options = await generateRegistrationOptions({
     rpName: 'Gerente de Renda',
     rpID: rpId(),
-    userID: AUTH_USER_ID,
+    userID: isoUint8Array.fromUTF8String(AUTH_USER_ID),
     userName: 'proprietario@gerente-de-renda',
     userDisplayName: 'Proprietário do Gerente de Renda',
     attestationType: 'none',
