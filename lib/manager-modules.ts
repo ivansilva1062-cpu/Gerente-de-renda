@@ -121,11 +121,6 @@ const concreteOpportunitySignals = [
   'microtask',
   'affiliate program',
   'referral program',
-  'service request',
-  'service provider',
-  'sell products',
-  'sales opportunity',
-  'commissioned sales',
 ]
 
 function containsAny(text: string, signals: string[]) {
@@ -180,7 +175,7 @@ export function radar(input: OpportunityInput): ModuleResult {
 
 export function avaliador(input: OpportunityInput): ModuleResult {
   const text = `${input.title} ${input.description ?? ''} ${input.category ?? ''}`.toLowerCase()
-  const hasWorkSignal = /trabalho|task|tarefa|survey|pesquisa|teste|freelance|serviço|service|job|microtask|gig|gigwork|venda|sales|sell|produto|product|affiliate|creator/.test(text)
+  const hasWorkSignal = /trabalho|task|tarefa|survey|pesquisa|teste|freelance|serviço|service|job|microtask|gig|gigwork/.test(text)
   const hasPaymentSignal = /paid|pago|pagamento|reward|recompensa|earn|ganhe|dollar|dólar|usd|\$|compensation|salary|hourly rate|per task|per study|per test|per survey/.test(text)
   const hasConcreteAction = containsAny(text, concreteOpportunitySignals)
   const hasClearTask = Boolean(input.title && input.description)
@@ -265,7 +260,7 @@ export function risco(input: OpportunityInput): ModuleResult {
   const text = `${input.title} ${input.description ?? ''}`.toLowerCase()
   const suspicious = hasSensitiveFlow(text)
   const informationalContent = isInformationalContent(input)
-  const needsHumanAction = /captcha|verificação|identity|identidade|cadastro|login|senha|documento|autenticação|kyc/.test(text)
+  const needsHumanAction = /captcha|verificação|identity|identidade|cadastro|login|senha|documento|autenticação|kYC/.test(text)
 
   return {
     module: 'risco',
@@ -409,19 +404,19 @@ export function assessOpportunity(input: OpportunityInput): OpportunityAssessmen
         ? 'prepare'
         : 'monitor'
 
-    const evaluation = results.find((result) => result.module === 'avaliador')?.evaluation
-    const returnScore = evaluation?.returnLevel === 'high' ? 90 : evaluation?.returnLevel === 'medium' ? 60 : 25
-    const effortScore = evaluation?.effort === 'low' ? 90 : evaluation?.effort === 'medium' ? 60 : 30
-    const riskScore = evaluation?.riskLevel === 'high' || blocked ? 10 : evaluation?.riskLevel === 'medium' || requiresHumanAction ? 55 : 90
-    const accessibilityScore = evaluation?.accessibility === 'open' ? 90 : evaluation?.accessibility === 'restricted' ? 20 : 45
-    const confidenceScore = clampScore(Number(input.confidence ?? 0))
-    const rankingScore = clampScore(
-      returnScore * 0.4 +
-        effortScore * 0.25 +
-        riskScore * 0.2 +
-        accessibilityScore * 0.1 +
-        confidenceScore * 0.05,
-    )
+  const evaluation = results.find((result) => result.module === 'avaliador')?.evaluation
+  const returnScore = evaluation?.returnLevel === 'high' ? 90 : evaluation?.returnLevel === 'medium' ? 60 : 25
+  const effortScore = evaluation?.effort === 'low' ? 90 : evaluation?.effort === 'medium' ? 60 : 30
+  const riskScore = evaluation?.riskLevel === 'high' || blocked ? 10 : evaluation?.riskLevel === 'medium' || requiresHumanAction ? 55 : 90
+  const accessibilityScore = evaluation?.accessibility === 'open' ? 90 : evaluation?.accessibility === 'restricted' ? 20 : 45
+  const confidenceScore = clampScore(Number(input.confidence ?? 0))
+  const rankingScore = clampScore(
+    returnScore * 0.4 +
+      effortScore * 0.25 +
+      riskScore * 0.2 +
+      accessibilityScore * 0.1 +
+      confidenceScore * 0.05,
+  )
 
   return {
     score,

@@ -5,12 +5,6 @@ import {
   assessOpportunity,
   isInformationalContent,
 } from '@/lib/manager-modules'
-import {
-  OPPORTUNITY_CATEGORIES,
-  OPPORTUNITY_SOURCES,
-  type OpportunityCategory,
-} from '@/lib/opportunity-catalog'
-import { requestHasActiveSession } from '@/lib/auth-server'
 
 type TavilyResult = {
   title?: string
@@ -23,9 +17,50 @@ type TavilyResponse = {
   results?: TavilyResult[]
 }
 
-const SEARCHES = OPPORTUNITY_SOURCES
-const ALLOWED_CATEGORIES = OPPORTUNITY_CATEGORIES
-type Category = OpportunityCategory
+const SEARCHES = [
+  {
+    query:
+      'legitimate paid online opportunities apply now remote microtasks paid work',
+    category: 'microtasks',
+  },
+  {
+    query:
+      'legitimate paid research studies participant sign up apply online',
+    category: 'surveys',
+  },
+  {
+    query:
+      'paid website app testing become tester sign up',
+    category: 'testing',
+  },
+  {
+    query:
+      'remote freelance jobs apply now get paid legitimate',
+    category: 'freelance',
+  },
+  {
+    query:
+      'content creator monetization programs apply join get paid',
+    category: 'content',
+  },
+  {
+    query:
+      'affiliate programs join apply become affiliate start earning',
+    category: 'affiliate',
+  },
+]
+
+const ALLOWED_CATEGORIES = [
+  'microtasks',
+  'freelance',
+  'surveys',
+  'content',
+  'affiliate',
+  'testing',
+] as const
+
+type Category =
+  (typeof ALLOWED_CATEGORIES)[number]
 
 /*
  * ==========================================
@@ -115,13 +150,6 @@ const ACTION_SIGNALS = [
   'participants',
   'paid survey',
   'paid surveys',
-  'paid service',
-  'service provider',
-  'sell products',
-  'sales opportunity',
-  'commissioned sales',
-  'creator program',
-  'publishing program',
 ]
 
 /*
@@ -194,9 +222,6 @@ const PAYMENT_SIGNALS = [
   'per study',
   'per test',
   'per survey',
-  'commission',
-  'per project',
-  'per client',
 ]
 
 /*
@@ -260,54 +285,6 @@ async function ensureTable() {
     ALTER TABLE opportunities
     ADD COLUMN IF NOT EXISTS manager_blocked BOOLEAN
     NOT NULL DEFAULT FALSE
-  `
-
-  await sql`
-    ALTER TABLE opportunities
-    ADD COLUMN IF NOT EXISTS action_required TEXT
-    NOT NULL DEFAULT ''
-  `
-
-  await sql`
-    ALTER TABLE opportunities
-    ADD COLUMN IF NOT EXISTS remuneration TEXT
-    NOT NULL DEFAULT 'missing'
-  `
-
-  await sql`
-    ALTER TABLE opportunities
-    ADD COLUMN IF NOT EXISTS accessibility TEXT
-    NOT NULL DEFAULT 'unknown'
-  `
-
-  await sql`
-    ALTER TABLE opportunities
-    ADD COLUMN IF NOT EXISTS effort TEXT
-    NOT NULL DEFAULT 'high'
-  `
-
-  await sql`
-    ALTER TABLE opportunities
-    ADD COLUMN IF NOT EXISTS return_level TEXT
-    NOT NULL DEFAULT 'low'
-  `
-
-  await sql`
-    ALTER TABLE opportunities
-    ADD COLUMN IF NOT EXISTS risk_level TEXT
-    NOT NULL DEFAULT 'low'
-  `
-
-  await sql`
-    ALTER TABLE opportunities
-    ADD COLUMN IF NOT EXISTS risk_signals TEXT
-    NOT NULL DEFAULT ''
-  `
-
-  await sql`
-    ALTER TABLE opportunities
-    ADD COLUMN IF NOT EXISTS source_quality TEXT
-    NOT NULL DEFAULT 'unknown'
   `
 }
 
@@ -829,7 +806,6 @@ async function saveOpportunity(
     confidence,
     category,
   })
-  const evaluation = assessment.modules.find((module) => module.module === 'avaliador')?.evaluation
 
   await sql`
     INSERT INTO opportunities (
@@ -849,14 +825,6 @@ async function saveOpportunity(
       manager_score,
       manager_priority,
       manager_blocked,
-      action_required,
-      remuneration,
-      accessibility,
-      effort,
-      return_level,
-      risk_level,
-      risk_signals,
-      source_quality,
       discovered_at
     )
     VALUES (
@@ -876,14 +844,6 @@ async function saveOpportunity(
       ${assessment.score},
       ${assessment.priority},
       ${assessment.blocked},
-      ${evaluation?.action === 'human_required' ? 'Intervenção humana necessária antes da próxima etapa.' : 'Ação pública e não sensível disponível na fonte.'},
-      ${evaluation?.remuneration ?? 'missing'},
-      ${evaluation?.accessibility ?? 'unknown'},
-      ${evaluation?.effort ?? 'high'},
-      ${evaluation?.returnLevel ?? 'low'},
-      ${evaluation?.riskLevel ?? 'low'},
-      ${(evaluation?.riskSignals ?? []).join(', ')},
-      ${evaluation?.sourceQuality ?? 'unknown'},
       NOW()
     )
 
@@ -929,30 +889,6 @@ async function saveOpportunity(
       manager_blocked =
         EXCLUDED.manager_blocked,
 
-      action_required =
-        EXCLUDED.action_required,
-
-      remuneration =
-        EXCLUDED.remuneration,
-
-      accessibility =
-        EXCLUDED.accessibility,
-
-      effort =
-        EXCLUDED.effort,
-
-      return_level =
-        EXCLUDED.return_level,
-
-      risk_level =
-        EXCLUDED.risk_level,
-
-      risk_signals =
-        EXCLUDED.risk_signals,
-
-      source_quality =
-        EXCLUDED.source_quality,
-
       discovered_at =
         NOW()
   `
@@ -995,9 +931,6 @@ async function cleanOldContent() {
  */
 
 export async function GET() {
-  if (!(await requestHasActiveSession())) {
-    return NextResponse.json({ success: false, error: 'Autenticação necessária.' }, { status: 401 })
-  }
   try {
     await ensureTable()
 
@@ -1108,14 +1041,6 @@ export async function GET() {
           manager_score,
           manager_priority,
           manager_blocked,
-          action_required,
-          remuneration,
-          accessibility,
-          effort,
-          return_level,
-          risk_level,
-          risk_signals,
-          source_quality,
           discovered_at,
           created_at
         FROM opportunities
@@ -1126,9 +1051,8 @@ export async function GET() {
         LIMIT 100
       `
 
-    const opportunityRows = rows as Array<Record<string, unknown>>
     const opportunities =
-      opportunityRows.map(
+      rows.map(
         (
           row,
         ) => ({
@@ -1195,17 +1119,6 @@ export async function GET() {
               row.manager_blocked,
             ),
 
-          actionRequired: row.action_required ?? '',
-          remuneration: row.remuneration ?? 'missing',
-          accessibility: row.accessibility ?? 'unknown',
-          effort: row.effort ?? 'high',
-          returnLevel: row.return_level ?? 'low',
-          riskLevel: row.risk_level ?? 'low',
-          riskSignals: row.risk_signals
-            ? String(row.risk_signals).split(', ').filter(Boolean)
-            : [],
-          sourceQuality: row.source_quality ?? 'unknown',
-
           discoveredAt:
             row.discovered_at,
 
@@ -1233,9 +1146,8 @@ export async function GET() {
 
         searches,
 
-        categories: ALLOWED_CATEGORIES,
-
-        sources: OPPORTUNITY_SOURCES,
+        categories:
+          ALLOWED_CATEGORIES,
 
         continuous:
           true,
