@@ -13,6 +13,7 @@ import {
 import { persistExecution } from '@/lib/execution-store'
 import { requestHasActiveSession } from '@/lib/auth-server'
 import { isAuthorizedWorkerRequest } from '@/lib/worker-auth'
+import { runWorkerCycle } from '@/lib/worker-cycle'
 
 /*
  * ==========================================
@@ -300,6 +301,10 @@ async function runDiscovery(
       {
         method: 'GET',
         cache: 'no-store',
+        headers: {
+          ...(request.headers.get('cookie') ? { cookie: request.headers.get('cookie') as string } : {}),
+          ...(process.env.CRON_SECRET ? { authorization: `Bearer ${process.env.CRON_SECRET}` } : {}),
+        },
       },
     )
 
@@ -313,6 +318,63 @@ async function runDiscovery(
   }
 
   return data
+}
+
+async function getCycleCandidates() {
+  const rows = await sql`
+    SELECT id, title, source, category, description, action_required,
+      estimated_value, confidence, status, url, requires_signup, requires_user_action
+    FROM opportunities
+    WHERE status IN ('new', 'queued')
+      AND title IS NOT NULL
+      AND url IS NOT NULL
+    ORDER BY manager_blocked ASC, manager_score DESC, confidence DESC, estimated_value DESC, created_at DESC NULLS LAST
+    LIMIT 12
+  `
+  return rows as OpportunityRow[]
+}
+
+async function getExcludedExecutionIds() {
+  try {
+    const rows = await sql`
+      SELECT opportunity_id
+      FROM execution_runs
+      WHERE state IN ('queued', 'running', 'waiting_human', 'completed', 'blocked')
+        AND opportunity_id IS NOT NULL
+    `
+    return rows.map((row) => String(row.opportunity_id))
+  } catch {
+    return []
+  }
+}
+
+async function runContinuousCycle() {
+  await ensureManagerColumns()
+  const rows = await getCycleCandidates()
+  const excludedIds = await getExcludedExecutionIds()
+  const candidates = rows.map((row) => ({
+    ...row,
+    url: row.url ?? '',
+    description: row.description ?? '',
+    estimatedValue: Number(row.estimated_value ?? 0),
+    confidence: Number(row.confidence ?? 0),
+    actionRequired: row.action_required ?? (row.requires_signup ? 'Cadastro necessário' : undefined),
+    managerScore: 0,
+  }))
+
+  return runWorkerCycle(
+    candidates,
+    excludedIds,
+    async (candidate) => {
+      const result = await inspectOpportunity(candidate)
+      return {
+        id: candidate.id,
+        state: result.state,
+        error: result.execution?.error,
+      }
+    },
+    3,
+  )
 }
 
 /*
@@ -769,6 +831,7 @@ export async function GET(
         await runDiscovery(
           request,
         )
+      const cycle = await runContinuousCycle()
 
       return NextResponse.json({
         success: true,
@@ -796,6 +859,7 @@ export async function GET(
         },
 
         radar,
+        cycle,
       })
     }
 
