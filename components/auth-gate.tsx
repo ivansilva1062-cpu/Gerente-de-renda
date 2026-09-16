@@ -71,7 +71,7 @@ function AuthScreen({
           })
 
           const authenticationResponse = await startAuthentication({
-            optionsJSON: optionsResponse.options,
+            optionsJSON: optionsResponse,
           })
 
           await authRequest({
@@ -84,7 +84,7 @@ function AuthScreen({
           })
 
           const registrationResponse = await startRegistration({
-            optionsJSON: optionsResponse.options,
+            optionsJSON: optionsResponse,
           })
 
           await authRequest({
