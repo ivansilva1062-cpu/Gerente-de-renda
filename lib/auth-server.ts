@@ -6,7 +6,7 @@ import {
   generateRegistrationOptions,
   verifyAuthenticationResponse,
   verifyRegistrationResponse,
-} from '@simplewebauthn/server'
+} from '@simplewebauthan/server'
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/types'
 import { cookies } from 'next/headers'
 import { sql } from './db'
@@ -103,7 +103,7 @@ export async function ensureAuthTables() {
   await sql`
     CREATE TABLE IF NOT EXISTS auth_settings (
       id BOOLEAN PRIMARY KEY DEFAULT TRUE,
-      idle_timeout_seconds INTEGER NOT NULL DEFAULT ${DEFAULT_IDLE_TIMEOUT_SECONDS},
+      idle_timeout_seconds INTEGER NOT NULL DEFAULT 900,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `
