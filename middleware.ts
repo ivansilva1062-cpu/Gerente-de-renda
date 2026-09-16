@@ -32,6 +32,16 @@ export async function middleware(request: NextRequest) {
   const cookie = request.cookies.get(COOKIE)?.value
   if (cookie && await validSignature(cookie)) return NextResponse.next()
 
+  const cronSecret = process.env.CRON_SECRET
+  const authorization = request.headers.get('authorization')
+  if (
+    cronSecret &&
+    authorization === `Bearer ${cronSecret}` &&
+    (pathname === '/api/worker' || pathname === '/api/discover')
+  ) {
+    return NextResponse.next()
+  }
+
   if (pathname.startsWith('/api/')) {
     return NextResponse.json({ success: false, error: 'Autenticação necessária.' }, { status: 401 })
   }

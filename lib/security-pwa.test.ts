@@ -67,6 +67,7 @@ test('mantém acesso protegido no middleware e nas APIs privadas', async () => {
   const earnings = await read('app/api/earnings/route.ts')
   const execution = await read('app/api/execution/route.ts')
   const worker = await read('app/api/worker/route.ts')
+  const manager = await read('app/api/manager/route.ts')
 
   assert.match(middleware, /requestHasActiveSession|validSignature/)
   assert.match(middleware, /Autenticação necessária/)
@@ -74,4 +75,8 @@ test('mantém acesso protegido no middleware e nas APIs privadas', async () => {
   assert.match(earnings, /requestHasActiveSession\(\)/)
   assert.match(execution, /requestHasActiveSession\(\)/)
   assert.match(worker, /requestHasActiveSession\(\)/)
+  assert.match(middleware, /CRON_SECRET/)
+  assert.match(middleware, /pathname === '\/api\/worker'/)
+  assert.match(middleware, /pathname === '\/api\/discover'/)
+  assert.doesNotMatch(manager, /fallbackCandidate/)
 })

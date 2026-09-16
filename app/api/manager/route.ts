@@ -13,14 +13,6 @@ const pipeline = [
   'entrega',
 ] as const
 
-const fallbackCandidate: ManagerExecutionInput = {
-  id: 'fallback',
-  title: 'Avaliacao de oportunidade',
-  url: 'https://example.com',
-  description: 'Trabalho remunerado com envio de tarefa e confirmação de pagamento.',
-  estimatedValue: 120,
-}
-
 async function latestCandidate() {
   try {
     const result = await sql`
@@ -41,20 +33,38 @@ async function latestCandidate() {
 
     return row
         ? {
-          id: String(row.id ?? fallbackCandidate.id),
-          title: String(row.title ?? fallbackCandidate.title),
-          url: String(row.url ?? fallbackCandidate.url),
+          id: String(row.id ?? ''),
+          title: String(row.title ?? ''),
+          url: String(row.url ?? ''),
           description: String(row.description ?? ''),
           estimatedValue: Number(row.estimated_value ?? 0),
         }
-      : fallbackCandidate
+      : null
   } catch (error) {
     console.error('Erro ao consultar candidata do gerente:', error)
-    return fallbackCandidate
+    return null
   }
 }
 
-function orchestrate(candidate: ManagerExecutionInput) {
+function orchestrate(candidate: ManagerExecutionInput | null) {
+  if (!candidate) {
+    return {
+      candidate: null,
+      modules: [],
+      assessment: null,
+      decision: null,
+      execution: null,
+      nextAction: 'O Radar deve continuar procurando oportunidades reais.',
+      pipeline,
+      rules: {
+        estimatedValuesAreNotEarnings: true,
+        onlyConfirmedEarningsAffectBalance: true,
+        sensitiveActionsRequireHuman: true,
+        pendingTasksBlockAgent: false,
+      },
+    }
+  }
+
   const plan = planManagerExecution(candidate)
 
   return {

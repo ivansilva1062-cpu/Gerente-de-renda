@@ -362,8 +362,25 @@ async function runContinuousCycle() {
     managerScore: 0,
   }))
 
+  const eligibleCandidates = [] as typeof candidates
+  for (const candidate of candidates) {
+    const plan = planManagerExecution(candidate)
+    if (plan.execution.state === 'blocked') {
+      await sql`
+        UPDATE opportunities
+        SET status = 'pending',
+            manager_score = ${plan.assessment.score},
+            manager_priority = ${plan.assessment.priority},
+            manager_blocked = TRUE
+        WHERE id = ${candidate.id}
+      `
+      continue
+    }
+    eligibleCandidates.push(candidate)
+  }
+
   return runWorkerCycle(
-    candidates,
+    eligibleCandidates,
     excludedIds,
     async (candidate) => {
       const result = await inspectOpportunity(candidate)
