@@ -18,6 +18,19 @@ export async function persistExecution(execution: ExecutionRecord) {
   `
 
   await sql`
+    CREATE TABLE IF NOT EXISTS execution_events (
+      id BIGSERIAL PRIMARY KEY,
+      execution_id TEXT NOT NULL,
+      state TEXT NOT NULL,
+      action TEXT NOT NULL,
+      error TEXT,
+      evidence TEXT,
+      intervention JSONB,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `
+
+  await sql`
     INSERT INTO execution_runs (
       id, opportunity_id, state, action, opportunity, intervention,
       evidence, error, created_at, updated_at
@@ -41,5 +54,17 @@ export async function persistExecution(execution: ExecutionRecord) {
       evidence = EXCLUDED.evidence,
       error = EXCLUDED.error,
       updated_at = EXCLUDED.updated_at
+  `
+
+  await sql`
+    INSERT INTO execution_events (
+      execution_id, state, action, error, evidence, intervention, created_at
+    )
+    VALUES (
+      ${execution.id}, ${execution.state}, ${execution.action},
+      ${execution.error ?? null}, ${execution.evidence ?? null},
+      ${execution.intervention ? JSON.stringify(execution.intervention) : null},
+      ${execution.updatedAt}
+    )
   `
 }

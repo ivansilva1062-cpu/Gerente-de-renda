@@ -8,6 +8,8 @@ import {
 } from '@/lib/manager-modules'
 import { decideManagerAction } from '@/lib/manager-decision'
 import { requestHasActiveSession } from '@/lib/auth-server'
+import { executionNextStep, planManagerExecution } from '@/lib/manager-execution'
+import { persistExecution } from '@/lib/execution-store'
 
 /*
  * CÉREBRO DO GERENTE DE RENDA
@@ -63,6 +65,7 @@ export async function GET() {
     }
 
     let managerCandidate: OpportunityInput | null = null
+    let managerCandidateId: string | null = null
 
     try {
       const result = await sql`
@@ -94,6 +97,7 @@ export async function GET() {
 
       const opportunityRow = await sql`
         SELECT
+          id,
           title,
           url,
           description,
@@ -122,6 +126,10 @@ export async function GET() {
 
       if (latestOpportunity) {
         managerCandidate = latestOpportunity
+        managerCandidateId = String(opportunityRows.find((row) =>
+          String(row.title ?? '') === latestOpportunity.title &&
+          String(row.url ?? '') === latestOpportunity.url,
+        )?.id ?? '') || null
       }
     } catch (error) {
       /*
@@ -189,6 +197,17 @@ export async function GET() {
           priority: assessment.priority,
         })
       : null
+    const managerExecution = managerCandidate && managerCandidateId
+      ? planManagerExecution({ ...managerCandidate, id: managerCandidateId })
+      : null
+
+    if (managerExecution) {
+      try {
+        await persistExecution(managerExecution.execution)
+      } catch (error) {
+        console.error('Erro ao registrar execução do Gerente:', error)
+      }
+    }
 
     const pipeline = [
       'radar',
@@ -226,6 +245,8 @@ export async function GET() {
         rulesPreserved: true,
         assessment,
         decision: managerDecision,
+        execution: managerExecution?.execution ?? null,
+        nextStep: managerExecution ? executionNextStep(managerExecution.execution) : null,
         message: managerCandidate
           ? 'Candidata real priorizada pelo score combinado dos módulos.'
           : 'Não há candidata real disponível no momento; o Radar deve continuar pesquisando.',

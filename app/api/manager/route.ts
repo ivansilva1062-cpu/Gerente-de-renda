@@ -1,11 +1,7 @@
 import { NextResponse } from 'next/server'
 import { sql } from '@/lib/db'
-import {
-  assessOpportunity,
-  runManagerModules,
-  type OpportunityInput,
-} from '@/lib/manager-modules'
-import { decideManagerAction } from '@/lib/manager-decision'
+import { executionNextStep, planManagerExecution, type ManagerExecutionInput } from '@/lib/manager-execution'
+import type { OpportunityInput } from '@/lib/manager-modules'
 
 const pipeline = [
   'radar',
@@ -17,7 +13,8 @@ const pipeline = [
   'entrega',
 ] as const
 
-const fallbackCandidate: OpportunityInput = {
+const fallbackCandidate: ManagerExecutionInput = {
+  id: 'fallback',
   title: 'Avaliacao de oportunidade',
   url: 'https://example.com',
   description: 'Trabalho remunerado com envio de tarefa e confirmação de pagamento.',
@@ -28,7 +25,8 @@ async function latestCandidate() {
   try {
     const result = await sql`
       SELECT
-        title,
+          id,
+          title,
         url,
         description,
         estimated_value
@@ -42,7 +40,8 @@ async function latestCandidate() {
     const row = result[0]
 
     return row
-      ? {
+        ? {
+          id: String(row.id ?? fallbackCandidate.id),
           title: String(row.title ?? fallbackCandidate.title),
           url: String(row.url ?? fallbackCandidate.url),
           description: String(row.description ?? ''),
@@ -55,19 +54,16 @@ async function latestCandidate() {
   }
 }
 
-function orchestrate(candidate: OpportunityInput) {
-  const modules = runManagerModules(candidate)
-  const assessment = assessOpportunity(candidate)
-  const decision = decideManagerAction(modules, {
-    score: assessment.score,
-    priority: assessment.priority,
-  })
+function orchestrate(candidate: ManagerExecutionInput) {
+  const plan = planManagerExecution(candidate)
 
   return {
     candidate,
-    modules,
-    assessment,
-    decision,
+    modules: plan.modules,
+    assessment: plan.assessment,
+    decision: plan.decision,
+    execution: plan.execution,
+    nextAction: executionNextStep(plan.execution),
     pipeline,
     rules: {
       estimatedValuesAreNotEarnings: true,
@@ -90,7 +86,8 @@ export async function GET() {
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as Partial<OpportunityInput>
-    const candidate: OpportunityInput = {
+    const candidate: ManagerExecutionInput = {
+      id: `inline-${Date.now()}`,
       title: String(body.title ?? ''),
       url: String(body.url ?? ''),
       description: body.description,

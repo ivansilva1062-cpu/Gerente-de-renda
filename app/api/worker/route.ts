@@ -3,8 +3,7 @@ import { chromium } from 'playwright-core'
 import Browserbase from '@browserbasehq/sdk'
 
 import { sql } from '@/lib/db'
-import { assessOpportunity } from '@/lib/manager-modules'
-import { decideManagerAction } from '@/lib/manager-decision'
+import { executionNextStep, planManagerExecution } from '@/lib/manager-execution'
 import {
   createExecution,
   isSensitiveAction,
@@ -371,20 +370,9 @@ async function inspectOpportunity(
     category: opportunity.category,
     source: opportunity.source,
   }
-  const assessment = assessOpportunity(executionOpportunity)
-  const managerDecision = decideManagerAction(
-    assessment.modules,
-    {
-      score: assessment.score,
-      priority: assessment.priority,
-    },
-  )
-  let execution = createExecution({
-    id: `execution-${opportunity.id}`,
-    opportunity: executionOpportunity,
-    modules: assessment.modules,
-    decision: managerDecision,
-  })
+  const plan = planManagerExecution({ ...executionOpportunity, id: opportunity.id })
+  const { assessment, decision: managerDecision } = plan
+  let execution = plan.execution
 
   await persistExecution(execution)
 
@@ -406,6 +394,7 @@ async function inspectOpportunity(
       assessment,
       managerDecision,
       execution,
+      nextAction: executionNextStep(execution),
     }
   }
 
@@ -718,9 +707,7 @@ async function inspectOpportunity(
       execution,
 
       nextAction:
-        requiresHuman
-          ? 'Aguardando ação do usuário na fonte oficial.'
-          : 'Preparação segura concluída. Nenhum ganho foi confirmado.',
+        executionNextStep(execution),
     }
   } finally {
     /*

@@ -20,6 +20,12 @@ type ManagerResponse = {
       nextAction: string
       requiresHumanAction: boolean
     }
+    execution: {
+      state: 'queued' | 'running' | 'waiting_human' | 'completed' | 'blocked' | 'failed'
+      error?: string
+      intervention?: { reason: string; action: string }
+    } | null
+    nextAction: string | null
     rules: {
       estimatedValuesAreNotEarnings: boolean
       onlyConfirmedEarningsAffectBalance: boolean
@@ -105,6 +111,26 @@ export function ManagerCabin() {
             <p className="mt-1 text-sm text-muted-foreground">Próximo passo: {data.decision.nextAction}</p>
           </div>
         </div>
+
+        {data.execution ? (
+          <div className="rounded-lg border border-border/70 bg-muted/20 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-medium">Estado da execução</p>
+              <Badge variant={data.execution.state === 'blocked' || data.execution.state === 'failed' ? 'destructive' : data.execution.state === 'waiting_human' ? 'warning' : 'success'}>
+                {data.execution.state}
+              </Badge>
+            </div>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Próximo passo: {data.nextAction ?? 'Aguardando atualização do Worker.'}
+            </p>
+            {data.execution.intervention?.reason ? (
+              <p className="mt-2 text-xs text-warning-foreground">Motivo: {data.execution.intervention.reason}</p>
+            ) : null}
+            {data.execution.error ? (
+              <p className="mt-2 text-xs text-destructive">Motivo: {data.execution.error}</p>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="grid gap-2 sm:grid-cols-4">
           {data.modules.map((module) => (

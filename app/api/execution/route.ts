@@ -3,10 +3,9 @@ import { chromium } from 'playwright-core'
 import Browserbase from '@browserbasehq/sdk'
 
 import { sql } from '@/lib/db'
-import { assessOpportunity, type OpportunityInput } from '@/lib/manager-modules'
-import { decideManagerAction } from '@/lib/manager-decision'
+import { type OpportunityInput } from '@/lib/manager-modules'
+import { executionNextStep, planManagerExecution } from '@/lib/manager-execution'
 import {
-  createExecution,
   isSensitiveAction,
   transitionExecution,
   type ExecutionRecord,
@@ -112,17 +111,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: 'Oportunidade não encontrada.' }, { status: 404 })
     }
 
-    const assessment = assessOpportunity(opportunity)
-    const decision = decideManagerAction(assessment.modules, {
-      score: assessment.score,
-      priority: assessment.priority,
-    })
-    let execution = createExecution({
-      id: `execution-${opportunity.id}`,
-      opportunity,
-      modules: assessment.modules,
-      decision,
-    })
+    let execution = planManagerExecution(opportunity).execution
 
     await persistExecution(execution)
     if (execution.state === 'queued') {
@@ -141,6 +130,7 @@ export async function POST(request: Request) {
         paymentRegistered: false,
         confirmationRoute: '/api/earnings',
       },
+      nextAction: executionNextStep(execution),
     }, { status: execution.state === 'failed' ? 500 : 200 })
   } catch (error) {
     console.error('Erro no motor de execução:', error)
