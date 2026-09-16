@@ -1,363 +1,119 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { usePathname, useRouter } from 'next/navigation'
-import { startAuthentication, startRegistration } from '@simplewebauthn/browser'
-import { Fingerprint, LockKeyhole, ShieldCheck } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+import {
+  startAuthentication,
+  startRegistration,
+} from '@simplewebauthn/browser'
 
-type AuthStatus = {
-  configured: boolean
+type Session = {
   authenticated: boolean
-  session?: {
-    active: boolean
-    idleTimeoutSeconds: number
-  }
+  expiresAt?: number
+  idleTimeoutSeconds?: number
 }
 
-type AuthOptions = Record<string, unknown>
+type AuthState = {
+  configured: boolean
+  authenticated: boolean
+  session?: Session
+}
 
-async function authRequest(action: string, response?: unknown) {
-  const result = await fetch('/api/auth', {
+async function authRequest(body: Record<string, unknown>) {
+  const response = await fetch('/api/auth', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+    },
     credentials: 'same-origin',
-    body: JSON.stringify({ action, response }),
+    body: JSON.stringify(body),
   })
 
-  const data = await result.json() as Record<string, unknown>
+  const data = await response.json().catch(() => ({}))
 
-  if (!result.ok) {
-    throw new Error(String(data.error ?? 'Falha de autenticação.'))
+  if (!response.ok) {
+    throw new Error(data?.error || 'Não foi possível concluir a autenticação.')
   }
 
   return data
 }
 
-export function AuthGate({ children }: { children: React.ReactNode }) {
-  const [status, setStatus] = useState<AuthStatus | null>(null)
+function AuthScreen({
+  configured,
+  onAuthenticated,
+}: {
+  configured: boolean
+  onAuthenticated: () => void
+}) {
+  const buttonRef = useRef<HTMLButtonElement | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [authenticationOptions, setAuthenticationOptions] = useState<AuthOptions | null>(null)
-  const [registrationOptions, setRegistrationOptions] = useState<AuthOptions | null>(null)
 
-  const pathname = usePathname()
-  const router = useRouter()
-
-  async function refresh() {
-    const response = await fetch('/api/auth', {
-      credentials: 'same-origin',
-      cache: 'no-store',
-    })
-
-    if (!response.ok) {
-      throw new Error('Não foi possível consultar a autenticação.')
-    }
-
-    setStatus(await response.json() as AuthStatus)
-  }
-
-  useEffect(() => {
-    void refresh().catch((reason: unknown) => {
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : 'Não foi possível consultar a autenticação.'
-      )
-    })
-  }, [])
-
-  /*
-   * IMPORTANTE PARA SAFARI/iOS:
-   *
-   * As opções do WebAuthn são carregadas ANTES do usuário tocar
-   * no botão. Assim, o startAuthentication()/startRegistration()
-   * pode ser executado diretamente no gesto do usuário.
-   */
-  useEffect(() => {
-    if (!status || status.authenticated) return
-
-    let cancelled = false
-
-    async function prepareWebAuthn() {
-      try {
-        setError('')
-
-        if (status.configured) {
-          const options = await authRequest('authentication-options')
-
-          if (!cancelled) {
-            setAuthenticationOptions(options as AuthOptions)
-          }
-        } else {
-          const options = await authRequest('registration-options')
-
-          if (!cancelled) {
-            setRegistrationOptions(options as AuthOptions)
-          }
-        }
-      } catch (reason) {
-        if (!cancelled) {
-          setError(
-            reason instanceof Error
-              ? reason.message
-              : 'Não foi possível preparar a autenticação segura.'
-          )
-        }
-      }
-    }
-
-    void prepareWebAuthn()
-
-    return () => {
-      cancelled = true
-    }
-  }, [status?.configured, status?.authenticated])
-
-  useEffect(() => {
-    if (!status?.authenticated) return
-
-    let lastActivity = Date.now()
-    let lastHeartbeat = Date.now()
-    let locking = false
-    let timer: ReturnType<typeof setInterval> | undefined
-
-    const markActivity = () => {
-      lastActivity = Date.now()
-    }
-
-    const lock = async () => {
-      if (locking) return
-
-      locking = true
-
-      await authRequest('block').catch(() => undefined)
-
-      setStatus((current) =>
-        current
-          ? {
-              ...current,
-              authenticated: false,
-              session: current.session
-                ? { ...current.session, active: false }
-                : current.session,
-            }
-          : current
-      )
-    }
-
-    const timeout =
-      (status.session?.idleTimeoutSeconds ?? 900) * 1000
-
-    window.addEventListener('pointerdown', markActivity, { passive: true })
-    window.addEventListener('keydown', markActivity, { passive: true })
-    window.addEventListener('touchstart', markActivity, { passive: true })
-
-    timer = setInterval(() => {
-      const now = Date.now()
-
-      if (now - lastActivity >= timeout) {
-        void lock()
-      } else if (now - lastHeartbeat >= 60_000) {
-        lastHeartbeat = now
-        void authRequest('heartbeat').catch(() => lock())
-      }
-    }, 15_000)
-
-    return () => {
-      window.removeEventListener('pointerdown', markActivity)
-      window.removeEventListener('keydown', markActivity)
-      window.removeEventListener('touchstart', markActivity)
-
-      if (timer) {
-        clearInterval(timer)
-      }
-    }
-  }, [
-    status?.authenticated,
-    status?.session?.idleTimeoutSeconds,
-  ])
-
-  async function authenticateWithPreparedOptions() {
-    if (!authenticationOptions) {
-      setError('A autenticação segura ainda está sendo preparada. Tente novamente em alguns segundos.')
-      return
-    }
-
-    setBusy(true)
-    setError('')
-
-    try {
-      /*
-       * Esta chamada acontece imediatamente após o toque do usuário.
-       * Não fazemos fetch antes dela.
-       */
-      const credential = await startAuthentication({
-        optionsJSON:
-          authenticationOptions as Parameters<
-            typeof startAuthentication
-          >[0]['optionsJSON'],
-      })
-
-      await authRequest('authentication-verify', credential)
-
-      await refresh()
-
-      router.replace('/')
-    } catch (reason) {
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : 'Não foi possível autenticar a passkey.'
-      )
-
-      /*
-       * Se a tentativa consumiu o desafio, preparamos um novo.
-       */
-      try {
-        const options = await authRequest('authentication-options')
-        setAuthenticationOptions(options as AuthOptions)
-      } catch {
-        // O erro principal já foi mostrado ao usuário.
-      }
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function registerWithPreparedOptions() {
-    if (!registrationOptions) {
-      setError('O cadastro seguro ainda está sendo preparado. Tente novamente em alguns segundos.')
-      return
-    }
-
-    setBusy(true)
-    setError('')
-
-    try {
-      /*
-       * Também acontece diretamente após o toque do usuário.
-       */
-      const credential = await startRegistration({
-        optionsJSON:
-          registrationOptions as Parameters<
-            typeof startRegistration
-          >[0]['optionsJSON'],
-      })
-
-      await authRequest('registration-verify', credential)
-
-      await refresh()
-
-      router.replace('/')
-    } catch (reason) {
-      setError(
-        reason instanceof Error
-          ? reason.message
-          : 'Não foi possível cadastrar a passkey.'
-      )
-
-      /*
-       * Prepara novamente as opções caso o desafio tenha expirado
-       * ou sido consumido.
-       */
-      try {
-        const options = await authRequest('registration-options')
-        setRegistrationOptions(options as AuthOptions)
-      } catch {
-        // O erro principal já foi mostrado ao usuário.
-      }
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  if (!status) {
-    return (
-      <AuthScreen
-        title="Verificando proteção"
-        description="Consultando a sessão segura do Gerente..."
-      />
-    )
-  }
-
-  if (!status.authenticated) {
-    const configured = status.configured
-
-    const action = configured
-      ? authenticateWithPreparedOptions
-      : registerWithPreparedOptions
-
-    const optionsReady = configured
-      ? Boolean(authenticationOptions)
-      : Boolean(registrationOptions)
-
-    return (
-      <AuthScreen
-        title={
-          configured
-            ? 'Desbloquear Gerente'
-            : 'Configurar acesso seguro'
-        }
-        description={
-          configured
-            ? 'Use a passkey deste dispositivo. O iPhone poderá solicitar Face ID ou Touch ID.'
-            : 'Cadastre a passkey deste dispositivo para proteger o painel. Nenhuma imagem ou dado biométrico será enviado.'
-        }
-        action={action}
-        actionLabel={
-          configured
-            ? 'Usar Face ID / passkey'
-            : 'Cadastrar passkey neste dispositivo'
-        }
-        busy={busy}
-        actionReady={optionsReady}
-        error={error}
-      />
-    )
-  }
-
-  if (pathname === '/acesso') {
-    router.replace('/')
-    return null
-  }
-
-  return <>{children}</>
-}
-
-function AuthScreen({
-  title,
-  description,
-  action,
-  actionLabel,
-  busy = false,
-  actionReady = true,
-  error,
-}: {
-  title: string
-  description: string
-  action?: () => void
-  actionLabel?: string
-  busy?: boolean
-  actionReady?: boolean
-  error?: string
-}) {
-  const buttonRef = useRef<HTMLButtonElement>(null)
-
-  /*
-   * Safari/iOS: registra um listener nativo de click.
-   *
-   * Isso mantém a chamada do WebAuthn ligada diretamente ao
-   * gesto físico do usuário.
-   */
   useEffect(() => {
     const button = buttonRef.current
+    if (!button) return
 
-    if (!button || !action) return
+    const handleClick = async () => {
+      if (busy) return
 
-    const handleClick = () => {
-      if (busy || !actionReady) return
-      action()
+      setBusy(true)
+      setError('')
+
+      try {
+        if (configured) {
+          // IMPORTANTE:
+          // No Safari/iPhone, buscar as opções e iniciar
+          // o WebAuthn devem acontecer a partir do mesmo
+          // clique nativo.
+          const optionsResponse = await authRequest({
+            action: 'authentication-options',
+          })
+
+          const authenticationResponse = await startAuthentication({
+            optionsJSON: optionsResponse.options,
+          })
+
+          await authRequest({
+            action: 'authentication-verify',
+            response: authenticationResponse,
+          })
+
+          onAuthenticated()
+        } else {
+          const optionsResponse = await authRequest({
+            action: 'registration-options',
+          })
+
+          const registrationResponse = await startRegistration({
+            optionsJSON: optionsResponse.options,
+          })
+
+          await authRequest({
+            action: 'registration-verify',
+            response: registrationResponse,
+          })
+
+          onAuthenticated()
+        }
+      } catch (err) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : 'Não foi possível concluir a autenticação.'
+
+        if (
+          message.includes('NotAllowedError') ||
+          message.includes('not allowed') ||
+          message.includes('cancel')
+        ) {
+          setError(
+            'A autenticação foi cancelada ou não foi permitida pelo navegador. Tente novamente.'
+          )
+        } else {
+          setError(message)
+        }
+      } finally {
+        setBusy(false)
+      }
     }
 
     button.addEventListener('click', handleClick)
@@ -365,67 +121,181 @@ function AuthScreen({
     return () => {
       button.removeEventListener('click', handleClick)
     }
-  }, [action, busy, actionReady])
+  }, [configured, busy, onAuthenticated])
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background px-5 py-10">
-      <section className="w-full max-w-md space-y-6 rounded-2xl border border-border bg-card p-7 shadow-sm">
-        <div className="flex size-14 items-center justify-center rounded-xl bg-primary/10 text-primary">
-          {action ? (
-            <Fingerprint className="size-7" />
-          ) : (
-            <LockKeyhole className="size-7" />
-          )}
-        </div>
+    <main
+      style={{
+        minHeight: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 24,
+        background: '#0b0b0b',
+      }}
+    >
+      <section
+        style={{
+          width: '100%',
+          maxWidth: 420,
+          padding: 32,
+          borderRadius: 20,
+          background: '#151515',
+          border: '1px solid #2a2a2a',
+          color: '#fff',
+          textAlign: 'center',
+        }}
+      >
+        <div style={{ fontSize: 48, marginBottom: 16 }}>🔐</div>
 
-        <div className="space-y-2">
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {title}
-          </h1>
+        <h1
+          style={{
+            margin: 0,
+            fontSize: 28,
+            fontWeight: 700,
+          }}
+        >
+          Gerente de Renda
+        </h1>
 
-          <p className="text-sm leading-6 text-muted-foreground">
-            {description}
-          </p>
-        </div>
+        <p
+          style={{
+            marginTop: 12,
+            marginBottom: 28,
+            color: '#aaa',
+            lineHeight: 1.5,
+          }}
+        >
+          {configured
+            ? 'Use o Face ID para acessar o seu Gerente de Renda.'
+            : 'Cadastre o Face ID deste dispositivo para proteger o Gerente de Renda.'}
+        </p>
 
-        {action && (
-          <Button
-            ref={buttonRef}
-            type="button"
-            className="w-full"
-            disabled={busy || !actionReady}
-            onClick={() => {
-              /*
-               * O listener nativo acima é o responsável pela ação.
-               * Este handler fica vazio propositalmente para evitar
-               * duas chamadas no Safari.
-               */
-            }}
-          >
-            <ShieldCheck />
-
-            {busy
-              ? 'Aguardando dispositivo...'
-              : !actionReady
-                ? 'Preparando acesso seguro...'
-                : actionLabel}
-          </Button>
-        )}
+        <button
+          ref={buttonRef}
+          type="button"
+          disabled={busy}
+          style={{
+            width: '100%',
+            padding: '16px 20px',
+            border: 0,
+            borderRadius: 12,
+            background: busy ? '#555' : '#fff',
+            color: '#000',
+            fontSize: 17,
+            fontWeight: 700,
+            cursor: busy ? 'default' : 'pointer',
+          }}
+        >
+          {busy
+            ? 'Aguarde...'
+            : configured
+              ? 'Entrar com Face ID'
+              : 'Cadastrar Face ID'}
+        </button>
 
         {error && (
-          <p
-            role="alert"
-            className="text-sm text-destructive"
+          <div
+            style={{
+              marginTop: 20,
+              padding: 14,
+              borderRadius: 10,
+              background: '#2a1515',
+              color: '#ffb3b3',
+              fontSize: 14,
+              lineHeight: 1.45,
+            }}
           >
             {error}
-          </p>
+          </div>
         )}
-
-        <p className="text-xs leading-5 text-muted-foreground">
-          A autenticação é feita pelo sistema operacional. O servidor
-          armazena apenas a credencial pública necessária ao WebAuthn.
-        </p>
       </section>
     </main>
   )
+}
+
+export default function AuthGate({
+  children,
+}: {
+  children: React.ReactNode
+}) {
+  const [loading, setLoading] = useState(true)
+  const [auth, setAuth] = useState<AuthState | null>(null)
+
+  const loadAuth = async () => {
+    try {
+      const response = await fetch('/api/auth', {
+        credentials: 'same-origin',
+        cache: 'no-store',
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data?.error || 'Falha ao verificar autenticação.')
+      }
+
+      setAuth(data)
+    } catch (error) {
+      console.error('Erro ao verificar autenticação:', error)
+
+      setAuth({
+        configured: false,
+        authenticated: false,
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadAuth()
+  }, [])
+
+  useEffect(() => {
+    if (!auth?.authenticated) return
+
+    const heartbeat = window.setInterval(async () => {
+      try {
+        await authRequest({ action: 'heartbeat' })
+      } catch {
+        await loadAuth()
+      }
+    }, 60_000)
+
+    return () => {
+      window.clearInterval(heartbeat)
+    }
+  }, [auth?.authenticated])
+
+  if (loading) {
+    return (
+      <main
+        style={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: '#0b0b0b',
+          color: '#fff',
+          fontSize: 18,
+        }}
+      >
+        Carregando Gerente de Renda...
+      </main>
+    )
+  }
+
+  if (!auth?.authenticated) {
+    return (
+      <AuthScreen
+        configured={Boolean(auth?.configured)}
+        onAuthenticated={() => {
+          void loadAuth()
+        }}
+      />
+    )
+  }
+
+  return <>{children}</>
 }
