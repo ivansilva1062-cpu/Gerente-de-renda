@@ -6,7 +6,7 @@ import {
   generateRegistrationOptions,
   verifyAuthenticationResponse,
   verifyRegistrationResponse,
-} from '@simplewebauthan/server'
+} from '@simplewebauthn/server'
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/types'
 import { cookies } from 'next/headers'
 import { sql } from './db'
