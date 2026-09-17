@@ -71,7 +71,10 @@ function AuthScreen({
           })
 
           const authenticationResponse = await startAuthentication({
-            optionsJSON: optionsResponse,
+            optionsJSON: {
+              ...optionsResponse,
+              rpId: window.location.hostname,
+            },
           })
 
           await authRequest({
@@ -84,7 +87,13 @@ function AuthScreen({
           })
 
           const registrationResponse = await startRegistration({
-            optionsJSON: optionsResponse,
+            optionsJSON: {
+              ...optionsResponse,
+              rp: {
+                ...optionsResponse.rp,
+                id: window.location.hostname,
+              },
+            },
           })
 
           await authRequest({
