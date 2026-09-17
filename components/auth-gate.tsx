@@ -70,11 +70,19 @@ function AuthScreen({
             action: 'authentication-options',
           })
 
+          /*
+           * NÃO forçar rpId no navegador.
+           *
+           * O Safari deve usar o domínio HTTPS atual
+           * como RP ID.
+           */
+          const {
+            rpId: _rpId,
+            ...authenticationOptions
+          } = optionsResponse
+
           const authenticationResponse = await startAuthentication({
-            optionsJSON: {
-              ...optionsResponse,
-              rpId: window.location.hostname,
-            },
+            optionsJSON: authenticationOptions,
           })
 
           await authRequest({
@@ -86,14 +94,19 @@ function AuthScreen({
             action: 'registration-options',
           })
 
+          /*
+           * NÃO forçar rp.id no navegador.
+           *
+           * O Safari deve usar o domínio HTTPS atual
+           * como RP ID.
+           */
+          const {
+            rp: _rp,
+            ...registrationOptions
+          } = optionsResponse
+
           const registrationResponse = await startRegistration({
-            optionsJSON: {
-              ...optionsResponse,
-              rp: {
-                ...optionsResponse.rp,
-                id: window.location.hostname,
-              },
-            },
+            optionsJSON: registrationOptions,
           })
 
           await authRequest({
@@ -128,6 +141,11 @@ function AuthScreen({
       }
     }
 
+    /*
+     * Listener nativo:
+     * importante para o Safari/iPhone permitir WebAuthn
+     * dentro do gesto real do usuário.
+     */
     button.addEventListener('click', handleClick)
 
     return () => {
