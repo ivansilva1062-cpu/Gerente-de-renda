@@ -1,3 +1,11 @@
+import { AuthScreen } from '@/components/auth-gate'
+
 export default function AccessPage() {
-  return null
+  return (
+    <AuthScreen
+      onAuthenticated={() => {
+        window.location.assign('/')
+      }}
+    />
+  )
 }
