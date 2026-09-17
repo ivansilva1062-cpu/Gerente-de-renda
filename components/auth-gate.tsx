@@ -32,7 +32,8 @@ async function authRequest(body: Record<string, unknown>) {
 
   if (!response.ok) {
     throw new Error(
-      data?.error || 'Não foi possível concluir a autenticação.'
+      data?.error ||
+        'Não foi possível concluir a autenticação.',
     )
   }
 
@@ -47,111 +48,122 @@ function AuthScreen({
   onAuthenticated: () => void
 }) {
   const buttonRef = useRef<HTMLButtonElement | null>(null)
+  const pinInputRef = useRef<HTMLInputElement | null>(null)
   const busyRef = useRef(false)
 
   const [busy, setBusy] = useState(false)
+  const [pin, setPin] = useState('')
   const [error, setError] = useState('')
+
+  const loginWithPin = async () => {
+    if (busyRef.current) return
+
+    busyRef.current = true
+    setBusy(true)
+    setError('')
+
+    try {
+      if (!/^\d{6}$/.test(pin)) {
+        throw new Error('Digite o PIN de 6 números.')
+      }
+
+      await authRequest({
+        action: 'pin-login',
+        pin,
+      })
+
+      onAuthenticated()
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : 'Não foi possível entrar.'
+
+      setError(message)
+    } finally {
+      busyRef.current = false
+      setBusy(false)
+    }
+  }
+
+  const handleFaceId = async () => {
+    if (busyRef.current) return
+
+    busyRef.current = true
+    setBusy(true)
+    setError('')
+
+    try {
+      const optionsResponse = await authRequest({
+        action: configured
+          ? 'authentication-options'
+          : 'registration-options',
+      })
+
+      if (configured) {
+        const {
+          rpId: _rpId,
+          ...authenticationOptions
+        } = optionsResponse
+
+        const authenticationResponse =
+          await startAuthentication({
+            optionsJSON: authenticationOptions,
+          })
+
+        await authRequest({
+          action: 'authentication-verify',
+          response: authenticationResponse,
+        })
+      } else {
+        const {
+          rp: _rp,
+          ...registrationOptions
+        } = optionsResponse
+
+        const registrationResponse =
+          await startRegistration({
+            optionsJSON: registrationOptions,
+          })
+
+        await authRequest({
+          action: 'registration-verify',
+          response: registrationResponse,
+        })
+      }
+
+      onAuthenticated()
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : 'Não foi possível usar o Face ID.'
+
+      setError(message)
+    } finally {
+      busyRef.current = false
+      setBusy(false)
+    }
+  }
 
   useEffect(() => {
     const button = buttonRef.current
 
     if (!button) return
 
-    const handleClick = async () => {
-      if (busyRef.current) return
-
-      busyRef.current = true
-      setBusy(true)
-      setError('')
-
-      try {
-        if (configured) {
-          const optionsResponse = await authRequest({
-            action: 'authentication-options',
-          })
-
-          /*
-           * NÃO forçar rpId no navegador.
-           *
-           * O Safari deve usar o domínio HTTPS atual
-           * como RP ID.
-           */
-          const {
-            rpId: _rpId,
-            ...authenticationOptions
-          } = optionsResponse
-
-          const authenticationResponse = await startAuthentication({
-            optionsJSON: authenticationOptions,
-          })
-
-          await authRequest({
-            action: 'authentication-verify',
-            response: authenticationResponse,
-          })
-        } else {
-          const optionsResponse = await authRequest({
-            action: 'registration-options',
-          })
-
-          /*
-           * NÃO forçar rp.id no navegador.
-           *
-           * O Safari deve usar o domínio HTTPS atual
-           * como RP ID.
-           */
-          const {
-            rp: _rp,
-            ...registrationOptions
-          } = optionsResponse
-
-          const registrationResponse = await startRegistration({
-            optionsJSON: registrationOptions,
-          })
-
-          await authRequest({
-            action: 'registration-verify',
-            response: registrationResponse,
-          })
-        }
-
-        onAuthenticated()
-      } catch (err) {
-        const message =
-          err instanceof Error
-            ? err.message
-            : 'Não foi possível concluir a autenticação.'
-
-        console.error('Erro de autenticação:', err)
-
-        if (
-          message.includes('NotAllowedError') ||
-          message.includes('not allowed') ||
-          message.toLowerCase().includes('cancel')
-        ) {
-          setError(
-            'A autenticação foi cancelada ou não foi permitida pelo navegador. Tente novamente.'
-          )
-        } else {
-          setError(message)
-        }
-      } finally {
-        busyRef.current = false
-        setBusy(false)
-      }
+    const handleClick = () => {
+      void handleFaceId()
     }
 
-    /*
-     * Listener nativo:
-     * importante para o Safari/iPhone permitir WebAuthn
-     * dentro do gesto real do usuário.
-     */
     button.addEventListener('click', handleClick)
 
     return () => {
-      button.removeEventListener('click', handleClick)
+      button.removeEventListener(
+        'click',
+        handleClick,
+      )
     }
-  }, [configured, onAuthenticated])
+  }, [configured])
 
   return (
     <main
@@ -198,15 +210,77 @@ function AuthScreen({
         <p
           style={{
             marginTop: 12,
-            marginBottom: 28,
+            marginBottom: 24,
             color: '#aaa',
             lineHeight: 1.5,
           }}
         >
-          {configured
-            ? 'Use o Face ID para acessar o seu Gerente de Renda.'
-            : 'Cadastre o Face ID deste dispositivo para proteger o Gerente de Renda.'}
+          Digite seu PIN para acessar o Gerente.
         </p>
+
+        <input
+          ref={pinInputRef}
+          type="password"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          maxLength={6}
+          autoComplete="off"
+          placeholder="PIN de 6 números"
+          value={pin}
+          onChange={(event) => {
+            setPin(
+              event.target.value
+                .replace(/\D/g, '')
+                .slice(0, 6),
+            )
+            setError('')
+          }}
+          onKeyDown={(event) => {
+            if (
+              event.key === 'Enter' &&
+              pin.length === 6
+            ) {
+              void loginWithPin()
+            }
+          }}
+          style={{
+            width: '100%',
+            boxSizing: 'border-box',
+            padding: '16px',
+            borderRadius: 12,
+            border: '1px solid #444',
+            background: '#0b0b0b',
+            color: '#fff',
+            fontSize: 22,
+            textAlign: 'center',
+            letterSpacing: 8,
+            outline: 'none',
+          }}
+        />
+
+        <button
+          type="button"
+          disabled={busy || pin.length !== 6}
+          onClick={() => {
+            void loginWithPin()
+          }}
+          style={{
+            width: '100%',
+            marginTop: 14,
+            padding: '16px 20px',
+            border: 0,
+            borderRadius: 12,
+            background:
+              busy || pin.length !== 6
+                ? '#555'
+                : '#fff',
+            color: '#000',
+            fontSize: 17,
+            fontWeight: 700,
+          }}
+        >
+          {busy ? 'Entrando...' : 'Entrar'}
+        </button>
 
         <button
           ref={buttonRef}
@@ -214,21 +288,19 @@ function AuthScreen({
           disabled={busy}
           style={{
             width: '100%',
-            padding: '16px 20px',
-            border: 0,
+            marginTop: 12,
+            padding: '13px 20px',
+            border: '1px solid #444',
             borderRadius: 12,
-            background: busy ? '#555' : '#fff',
-            color: '#000',
-            fontSize: 17,
-            fontWeight: 700,
-            cursor: busy ? 'default' : 'pointer',
+            background: 'transparent',
+            color: '#fff',
+            fontSize: 15,
+            fontWeight: 600,
           }}
         >
-          {busy
-            ? 'Aguarde...'
-            : configured
-              ? 'Entrar com Face ID'
-              : 'Cadastrar Face ID'}
+          {configured
+            ? 'Tentar Face ID'
+            : 'Cadastrar Face ID'}
         </button>
 
         {error && (
@@ -257,7 +329,8 @@ export function AuthGate({
   children: React.ReactNode
 }) {
   const [loading, setLoading] = useState(true)
-  const [auth, setAuth] = useState<AuthState | null>(null)
+  const [auth, setAuth] =
+    useState<AuthState | null>(null)
 
   const loadAuth = async () => {
     try {
@@ -270,13 +343,17 @@ export function AuthGate({
 
       if (!response.ok) {
         throw new Error(
-          data?.error || 'Falha ao verificar autenticação.'
+          data?.error ||
+            'Falha ao verificar autenticação.',
         )
       }
 
       setAuth(data)
     } catch (error) {
-      console.error('Erro ao verificar autenticação:', error)
+      console.error(
+        'Erro ao verificar autenticação:',
+        error,
+      )
 
       setAuth({
         configured: false,
@@ -294,15 +371,18 @@ export function AuthGate({
   useEffect(() => {
     if (!auth?.authenticated) return
 
-    const heartbeat = window.setInterval(async () => {
-      try {
-        await authRequest({
-          action: 'heartbeat',
-        })
-      } catch {
-        await loadAuth()
-      }
-    }, 60_000)
+    const heartbeat = window.setInterval(
+      async () => {
+        try {
+          await authRequest({
+            action: 'heartbeat',
+          })
+        } catch {
+          await loadAuth()
+        }
+      },
+      60_000,
+    )
 
     return () => {
       window.clearInterval(heartbeat)
