@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { usePathname } from 'next/navigation'
 
 type Session = {
   authenticated: boolean
@@ -36,7 +37,7 @@ async function authRequest(body: Record<string, unknown>) {
   return data
 }
 
-function AuthScreen({
+export function AuthScreen({
   onAuthenticated,
 }: {
   onAuthenticated: () => void
@@ -221,6 +222,8 @@ export function AuthGate({
 }: {
   children: React.ReactNode
 }) {
+  const pathname = usePathname()
+
   const [loading, setLoading] = useState(true)
   const [auth, setAuth] =
     useState<AuthState | null>(null)
@@ -258,8 +261,13 @@ export function AuthGate({
   }
 
   useEffect(() => {
+    if (pathname === '/acesso') {
+      setLoading(false)
+      return
+    }
+
     void loadAuth()
-  }, [])
+  }, [pathname])
 
   useEffect(() => {
     if (!auth?.authenticated) return
@@ -281,6 +289,10 @@ export function AuthGate({
       window.clearInterval(heartbeat)
     }
   }, [auth?.authenticated])
+
+  if (pathname === '/acesso') {
+    return <>{children}</>
+  }
 
   if (loading) {
     return (
