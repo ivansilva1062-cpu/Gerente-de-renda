@@ -1,3 +1,5 @@
+'use client'
+
 import { AuthScreen } from '@/components/auth-gate'
 
 export default function AccessPage() {
