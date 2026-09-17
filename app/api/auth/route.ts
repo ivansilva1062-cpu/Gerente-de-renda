@@ -15,7 +15,10 @@ import {
   verifyAuthentication,
   verifyRegistration,
 } from '@/lib/auth-server'
-import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/types'
+import type {
+  AuthenticationResponseJSON,
+  RegistrationResponseJSON,
+} from '@simplewebauthn/types'
 
 function sameOrigin(request: Request) {
   return request.headers.get('origin') === new URL(request.url).origin
@@ -23,7 +26,13 @@ function sameOrigin(request: Request) {
 
 function errorResponse(error: unknown) {
   return NextResponse.json(
-    { success: false, error: error instanceof Error ? error.message : 'Falha de autenticação.' },
+    {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : 'Falha de autenticação.',
+    },
     { status: 400 },
   )
 }
@@ -31,8 +40,10 @@ function errorResponse(error: unknown) {
 export async function GET(request: Request) {
   try {
     await ensureAuthTables()
+
     const cookie = (await cookies()).get(AUTH_COOKIE)?.value
     const session = await sessionStatus(cookie)
+
     return NextResponse.json({
       configured: await hasCredential(),
       authenticated: session.active,
@@ -44,68 +55,261 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  if (!sameOrigin(request)) return NextResponse.json({ success: false, error: 'Origem inválida.' }, { status: 403 })
+  if (!sameOrigin(request)) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Origem inválida.',
+      },
+      { status: 403 },
+    )
+  }
+
   try {
-    const body = await request.json() as {
+    const body = (await request.json()) as {
       action?: string
-      response?: RegistrationResponseJSON | AuthenticationResponseJSON
+      pin?: string
+      response?:
+        | RegistrationResponseJSON
+        | AuthenticationResponseJSON
       idleTimeoutSeconds?: number
     }
+
     const cookieStore = await cookies()
 
+    // LOGIN POR PIN
+    if (body.action === 'pin-login') {
+      const configuredPin = process.env.AUTH_LOGIN_PIN
+
+      if (!configuredPin) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'PIN de acesso não configurado.',
+          },
+          { status: 500 },
+        )
+      }
+
+      const submittedPin =
+        typeof body.pin === 'string'
+          ? body.pin.trim()
+          : ''
+
+      if (submittedPin !== configuredPin) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'PIN incorreto.',
+          },
+          { status: 401 },
+        )
+      }
+
+      const session = await createSession()
+
+      cookieStore.set(AUTH_COOKIE, session.value, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        path: '/',
+        maxAge: session.maxAge,
+      })
+
+      return NextResponse.json({
+        success: true,
+      })
+    }
+
+    // CADASTRO DO FACE ID
     if (body.action === 'registration-options') {
-      if (await hasCredential()) return NextResponse.json({ success: false, error: 'Este Gerente já possui uma passkey.' }, { status: 409 })
-      return NextResponse.json(await registrationOptions(request))
+      if (await hasCredential()) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              'Este Gerente já possui uma passkey.',
+          },
+          { status: 409 },
+        )
+      }
+
+      return NextResponse.json(
+        await registrationOptions(request),
+      )
     }
+
     if (body.action === 'registration-verify') {
-      await verifyRegistration(request, body.response as RegistrationResponseJSON)
+      await verifyRegistration(
+        request,
+        body.response as RegistrationResponseJSON,
+      )
+
       const session = await createSession()
+
       cookieStore.set(AUTH_COOKIE, session.value, {
-        httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict',
-        path: '/', maxAge: session.maxAge,
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        path: '/',
+        maxAge: session.maxAge,
       })
-      return NextResponse.json({ success: true })
+
+      return NextResponse.json({
+        success: true,
+      })
     }
+
+    // LOGIN COM FACE ID
     if (body.action === 'authentication-options') {
-      if (!(await hasCredential())) return NextResponse.json({ success: false, error: 'Cadastre a primeira passkey.' }, { status: 409 })
-      return NextResponse.json(await authenticationOptions(request))
+      if (!(await hasCredential())) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Cadastre a primeira passkey.',
+          },
+          { status: 409 },
+        )
+      }
+
+      return NextResponse.json(
+        await authenticationOptions(request),
+      )
     }
+
     if (body.action === 'authentication-verify') {
-      await verifyAuthentication(request, body.response as AuthenticationResponseJSON)
+      await verifyAuthentication(
+        request,
+        body.response as AuthenticationResponseJSON,
+      )
+
       const session = await createSession()
+
       cookieStore.set(AUTH_COOKIE, session.value, {
-        httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict',
-        path: '/', maxAge: session.maxAge,
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        path: '/',
+        maxAge: session.maxAge,
       })
-      return NextResponse.json({ success: true })
+
+      return NextResponse.json({
+        success: true,
+      })
     }
+
+    // LOGOUT
     if (body.action === 'logout') {
-      await revokeSession(cookieStore.get(AUTH_COOKIE)?.value)
-      cookieStore.set(AUTH_COOKIE, '', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', path: '/', maxAge: 0 })
-      return NextResponse.json({ success: true })
+      await revokeSession(
+        cookieStore.get(AUTH_COOKIE)?.value,
+      )
+
+      cookieStore.set(AUTH_COOKIE, '', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        path: '/',
+        maxAge: 0,
+      })
+
+      return NextResponse.json({
+        success: true,
+      })
     }
+
+    // BLOQUEAR
     if (body.action === 'block') {
-      await revokeSession(cookieStore.get(AUTH_COOKIE)?.value)
-      cookieStore.set(AUTH_COOKIE, '', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', path: '/', maxAge: 0 })
-      return NextResponse.json({ success: true, blocked: true })
+      await revokeSession(
+        cookieStore.get(AUTH_COOKIE)?.value,
+      )
+
+      cookieStore.set(AUTH_COOKIE, '', {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        path: '/',
+        maxAge: 0,
+      })
+
+      return NextResponse.json({
+        success: true,
+        blocked: true,
+      })
     }
+
+    // HEARTBEAT
     if (body.action === 'heartbeat') {
-      const active = await touchSession(cookieStore.get(AUTH_COOKIE)?.value)
+      const active = await touchSession(
+        cookieStore.get(AUTH_COOKIE)?.value,
+      )
+
       if (!active) {
-        cookieStore.set(AUTH_COOKIE, '', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', path: '/', maxAge: 0 })
-        return NextResponse.json({ success: false, error: 'Sessão expirada por inatividade.' }, { status: 401 })
+        cookieStore.set(AUTH_COOKIE, '', {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'strict',
+          path: '/',
+          maxAge: 0,
+        })
+
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              'Sessão expirada por inatividade.',
+          },
+          { status: 401 },
+        )
       }
-      return NextResponse.json({ success: true, session: await sessionStatus(cookieStore.get(AUTH_COOKIE)?.value) })
+
+      return NextResponse.json({
+        success: true,
+        session: await sessionStatus(
+          cookieStore.get(AUTH_COOKIE)?.value,
+        ),
+      })
     }
+
+    // CONFIGURAÇÕES
     if (body.action === 'settings') {
-      const active = await touchSession(cookieStore.get(AUTH_COOKIE)?.value)
-      if (!active) return NextResponse.json({ success: false, error: 'Autenticação necessária.' }, { status: 401 })
-      if (typeof body.idleTimeoutSeconds === 'number') {
-        await updateIdleTimeoutSeconds(body.idleTimeoutSeconds)
+      const active = await touchSession(
+        cookieStore.get(AUTH_COOKIE)?.value,
+      )
+
+      if (!active) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Autenticação necessária.',
+          },
+          { status: 401 },
+        )
       }
-      return NextResponse.json({ success: true, idleTimeoutSeconds: await getIdleTimeoutSeconds() })
+
+      if (
+        typeof body.idleTimeoutSeconds ===
+        'number'
+      ) {
+        await updateIdleTimeoutSeconds(
+          body.idleTimeoutSeconds,
+        )
+      }
+
+      return NextResponse.json({
+        success: true,
+        idleTimeoutSeconds:
+          await getIdleTimeoutSeconds(),
+      })
     }
-    return NextResponse.json({ success: false, error: 'Ação de autenticação desconhecida.' }, { status: 400 })
+
+    return NextResponse.json(
+      {
+        success: false,
+        error:
+          'Ação de autenticação desconhecida.',
+      },
+      { status: 400 },
+    )
   } catch (error) {
     return errorResponse(error)
   }
