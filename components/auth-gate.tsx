@@ -1,10 +1,6 @@
-'use client' 
+'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import {
-  startAuthentication,
-  startRegistration,
-} from '@simplewebauthn/browser'
 
 type Session = {
   authenticated: boolean
@@ -41,13 +37,10 @@ async function authRequest(body: Record<string, unknown>) {
 }
 
 function AuthScreen({
-  configured,
   onAuthenticated,
 }: {
-  configured: boolean
   onAuthenticated: () => void
 }) {
-  const buttonRef = useRef<HTMLButtonElement | null>(null)
   const pinInputRef = useRef<HTMLInputElement | null>(null)
   const busyRef = useRef(false)
 
@@ -85,85 +78,6 @@ function AuthScreen({
       setBusy(false)
     }
   }
-
-  const handleFaceId = async () => {
-    if (busyRef.current) return
-
-    busyRef.current = true
-    setBusy(true)
-    setError('')
-
-    try {
-      const optionsResponse = await authRequest({
-        action: configured
-          ? 'authentication-options'
-          : 'registration-options',
-      })
-
-      if (configured) {
-        const {
-          rpId: _rpId,
-          ...authenticationOptions
-        } = optionsResponse
-
-        const authenticationResponse =
-          await startAuthentication({
-            optionsJSON: authenticationOptions,
-          })
-
-        await authRequest({
-          action: 'authentication-verify',
-          response: authenticationResponse,
-        })
-      } else {
-        const {
-          rp: _rp,
-          ...registrationOptions
-        } = optionsResponse
-
-        const registrationResponse =
-          await startRegistration({
-            optionsJSON: registrationOptions,
-          })
-
-        await authRequest({
-          action: 'registration-verify',
-          response: registrationResponse,
-        })
-      }
-
-      onAuthenticated()
-    } catch (err) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : 'Não foi possível usar o Face ID.'
-
-      setError(message)
-    } finally {
-      busyRef.current = false
-      setBusy(false)
-    }
-  }
-
-  useEffect(() => {
-    const button = buttonRef.current
-
-    if (!button) return
-
-    const handleClick = () => {
-      void handleFaceId()
-    }
-
-    button.addEventListener('click', handleClick)
-
-    return () => {
-      button.removeEventListener(
-        'click',
-        handleClick,
-      )
-    }
-  }, [configured])
 
   return (
     <main
@@ -282,27 +196,6 @@ function AuthScreen({
           {busy ? 'Entrando...' : 'Entrar'}
         </button>
 
-        <button
-          ref={buttonRef}
-          type="button"
-          disabled={busy}
-          style={{
-            width: '100%',
-            marginTop: 12,
-            padding: '13px 20px',
-            border: '1px solid #444',
-            borderRadius: 12,
-            background: 'transparent',
-            color: '#fff',
-            fontSize: 15,
-            fontWeight: 600,
-          }}
-        >
-          {configured
-            ? 'Tentar Face ID'
-            : 'Cadastrar Face ID'}
-        </button>
-
         {error && (
           <div
             style={{
@@ -410,7 +303,6 @@ export function AuthGate({
   if (!auth?.authenticated) {
     return (
       <AuthScreen
-        configured={Boolean(auth?.configured)}
         onAuthenticated={() => {
           void loadAuth()
         }}
