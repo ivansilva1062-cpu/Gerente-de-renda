@@ -16,6 +16,7 @@ import { isAuthorizedWorkerRequest } from '@/lib/worker-auth'
 import { runWorkerCycle } from '@/lib/worker-cycle'
 import { upsertNotificationEvent } from '@/lib/notifications'
 import { getOperatorProfile } from '@/lib/operator-profile'
+import { getStoredOperatorProfile } from '@/lib/profile-store'
 
 /*
  * ==========================================
@@ -59,8 +60,8 @@ type OpportunityRow = {
   requires_user_action: boolean
 }
 
-function getAuthorizedProfile() {
-  const profile = getOperatorProfile()
+async function getAuthorizedProfile() {
+  const profile = (await getStoredOperatorProfile()) ?? getOperatorProfile()
   const name = profile.fullName
   const email = profile.email
   const phone = profile.phone
@@ -108,7 +109,7 @@ async function getReusableBrowserSession(browserbase: Browserbase) {
 
 type AuthorizedFormData = Record<string, string | undefined>
 
-async function autoFillAuthorizedForm(page: { evaluate: (fn: (data: AuthorizedFormData) => void, data?: AuthorizedFormData) => Promise<unknown> }, profile: ReturnType<typeof getAuthorizedProfile>) {
+async function autoFillAuthorizedForm(page: { evaluate: (fn: (data: AuthorizedFormData) => void, data?: AuthorizedFormData) => Promise<unknown> }, profile: Awaited<ReturnType<typeof getAuthorizedProfile>>) {
   if (!profile) return
 
   const fillable = {
@@ -618,7 +619,7 @@ async function inspectOpportunity(
       },
     )
 
-    const authorizedProfile = getAuthorizedProfile()
+    const authorizedProfile = await getAuthorizedProfile()
     if (authorizedProfile) {
       await autoFillAuthorizedForm(page, authorizedProfile)
     }

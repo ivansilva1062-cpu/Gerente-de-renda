@@ -19,6 +19,16 @@ export type OperatorProfile = {
   experience: string[]
   profession?: string
   preferences: string[]
+  cpf?: string
+  professional?: Record<string, string>
+  formAnswers?: Record<string, string>
+  banking?: {
+    bankName?: string
+    accountHolder?: string
+    accountNumber?: string
+    agency?: string
+    pixKey?: string
+  }
 
   address?: {
     street?: string
@@ -58,6 +68,10 @@ export function getOperatorProfile():
     experience: list('OPERATOR_EXPERIENCE'),
     profession: optional('OPERATOR_PROFESSION'),
     preferences: list('OPERATOR_PREFERENCES'),
+    cpf: optional('OPERATOR_CPF'),
+    professional: undefined,
+    formAnswers: undefined,
+    banking: undefined,
     address: {
       street: optional('OPERATOR_ADDRESS_STREET'),
       number: optional('OPERATOR_ADDRESS_NUMBER'),
