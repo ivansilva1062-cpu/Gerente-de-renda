@@ -8,112 +8,65 @@
  */
 
 export type OperatorProfile = {
-  fullName: string
-  email: string
-  phone: string
-  birthDate: string
+  fullName?: string
+  email?: string
+  phone?: string
+  birthDate?: string
+  country?: string
+  city?: string
+  languages: string[]
+  skills: string[]
+  experience: string[]
+  profession?: string
+  preferences: string[]
 
-  address: {
-    street: string
-    number: string
-    complement: string
-    neighborhood: string
-    city: string
-    state: string
-    zipCode: string
-    country: string
-  }
-
-  payment: {
-    pixKey: string
+  address?: {
+    street?: string
+    number?: string
+    complement?: string
+    neighborhood?: string
+    city?: string
+    state?: string
+    zipCode?: string
+    country?: string
   }
 }
 
-function required(
-  name: string,
-): string {
-  const value =
-    process.env[name]
+function optional(name: string) {
+  const value = process.env[name]?.trim()
+  return value || undefined
+}
 
-  if (!value) {
-    throw new Error(
-      `Variável de ambiente ausente: ${name}`,
-    )
-  }
-
-  return value
+function list(name: string) {
+  return (process.env[name] ?? '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
 }
 
 export function getOperatorProfile():
   OperatorProfile {
   return {
-    fullName:
-      required(
-        'OPERATOR_NAME',
-      ),
-
-    email:
-      required(
-        'OPERATOR_EMAIL',
-      ),
-
-    phone:
-      required(
-        'OPERATOR_PHONE',
-      ),
-
-    birthDate:
-      required(
-        'OPERATOR_BIRTH_DATE',
-      ),
-
+    fullName: optional('OPERATOR_NAME'),
+    email: optional('OPERATOR_EMAIL'),
+    phone: optional('OPERATOR_PHONE'),
+    birthDate: optional('OPERATOR_BIRTH_DATE'),
+    country: optional('OPERATOR_ADDRESS_COUNTRY'),
+    city: optional('OPERATOR_ADDRESS_CITY'),
+    languages: list('OPERATOR_LANGUAGES'),
+    skills: list('OPERATOR_SKILLS'),
+    experience: list('OPERATOR_EXPERIENCE'),
+    profession: optional('OPERATOR_PROFESSION'),
+    preferences: list('OPERATOR_PREFERENCES'),
     address: {
-      street:
-        required(
-          'OPERATOR_ADDRESS_STREET',
-        ),
-
-      number:
-        required(
-          'OPERATOR_ADDRESS_NUMBER',
-        ),
-
-      complement:
-        process.env
-          .OPERATOR_ADDRESS_COMPLEMENT ??
-        '',
-
-      neighborhood:
-        required(
-          'OPERATOR_ADDRESS_NEIGHBORHOOD',
-        ),
-
-      city:
-        required(
-          'OPERATOR_ADDRESS_CITY',
-        ),
-
-      state:
-        required(
-          'OPERATOR_ADDRESS_STATE',
-        ),
-
-      zipCode:
-        required(
-          'OPERATOR_ADDRESS_ZIP',
-        ),
-
-      country:
-        process.env
-          .OPERATOR_ADDRESS_COUNTRY ??
-        'BR',
-    },
-
-    payment: {
-      pixKey:
-        required(
-          'OPERATOR_PIX_KEY',
-        ),
+      street: optional('OPERATOR_ADDRESS_STREET'),
+      number: optional('OPERATOR_ADDRESS_NUMBER'),
+      complement: optional('OPERATOR_ADDRESS_COMPLEMENT'),
+      neighborhood: optional('OPERATOR_ADDRESS_NEIGHBORHOOD'),
+      city: optional('OPERATOR_ADDRESS_CITY'),
+      state: optional('OPERATOR_ADDRESS_STATE'),
+      zipCode: optional('OPERATOR_ADDRESS_ZIP'),
+      country: optional('OPERATOR_ADDRESS_COUNTRY'),
     },
   }
 }

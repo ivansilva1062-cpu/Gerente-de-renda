@@ -15,6 +15,7 @@ import { requestHasActiveSession } from '@/lib/auth-server'
 import { isAuthorizedWorkerRequest } from '@/lib/worker-auth'
 import { runWorkerCycle } from '@/lib/worker-cycle'
 import { upsertNotificationEvent } from '@/lib/notifications'
+import { getOperatorProfile } from '@/lib/operator-profile'
 
 /*
  * ==========================================
@@ -59,15 +60,16 @@ type OpportunityRow = {
 }
 
 function getAuthorizedProfile() {
-  const name = process.env.OPERATOR_NAME?.trim()
-  const email = process.env.OPERATOR_EMAIL?.trim()
-  const phone = process.env.OPERATOR_PHONE?.trim()
-  const street = process.env.OPERATOR_ADDRESS_STREET?.trim()
-  const number = process.env.OPERATOR_ADDRESS_NUMBER?.trim()
-  const city = process.env.OPERATOR_ADDRESS_CITY?.trim()
-  const state = process.env.OPERATOR_ADDRESS_STATE?.trim()
-  const zip = process.env.OPERATOR_ADDRESS_ZIP?.trim()
-  const country = process.env.OPERATOR_ADDRESS_COUNTRY?.trim() || 'BR'
+  const profile = getOperatorProfile()
+  const name = profile.fullName
+  const email = profile.email
+  const phone = profile.phone
+  const street = profile.address?.street
+  const number = profile.address?.number
+  const city = profile.address?.city ?? profile.city
+  const state = profile.address?.state
+  const zip = profile.address?.zipCode
+  const country = profile.address?.country ?? profile.country
 
   if (!name && !email && !phone && !street && !city && !zip) {
     return null
@@ -219,6 +221,23 @@ const PAYMENT_SIGNALS = [
   'per study',
   'per test',
   'per survey',
+]
+
+const FINANCIAL_CONFIRMATION_SIGNALS = [
+  'password',
+  'senha',
+  'two-factor',
+  '2fa',
+  'identity verification',
+  'verify your identity',
+  'credit card',
+  'cartão',
+  'pix',
+  'bank account',
+  'conta bancária',
+  'withdraw',
+  'saque',
+  'payout',
 ]
 
 /*
@@ -662,6 +681,10 @@ async function inspectOpportunity(
         PAYMENT_SIGNALS,
       )
 
+    const financialConfirmationRequired =
+      findSignals(cleanedText, FINANCIAL_CONFIRMATION_SIGNALS).length > 0 ||
+      Boolean(opportunity.action_required && isSensitiveAction(opportunity.action_required))
+
     /*
      * ======================================
      * NÃO EXECUTA AÇÃO SENSÍVEL
@@ -716,11 +739,21 @@ async function inspectOpportunity(
         })
 
     if (requiresHuman) {
+      const notificationKind = financialConfirmationRequired
+        ? 'financial_confirmation_required'
+        : 'human_action'
+      const notificationTitle = financialConfirmationRequired
+        ? '💳 CONFIRMAÇÃO FINANCEIRA NECESSÁRIA'
+        : '⚠️ Sua resposta é necessária'
+      const notificationBody = financialConfirmationRequired
+        ? `Plataforma: ${opportunity.source}. Valor anunciado: ${Number(opportunity.estimated_value ?? 0)}. Motivo: ${sensitiveReason ?? 'a fonte exige confirmação financeira ou credencial sensível'}. Ação: abra a fonte oficial e confirme somente o que você decidir.`
+        : `Oportunidade: ${opportunity.title}. Ação: ${sensitiveReason ?? 'responda a etapa indicada na fonte oficial'}.`
+
       await upsertNotificationEvent({
-        kind: 'human_action',
+        kind: notificationKind,
         ref: `opportunity:${opportunity.id}`,
-        title: '⚠️ Ação necessária',
-        body: `Ação requerida em ${opportunity.title}: ${sensitiveReason ?? 'revise a etapa indicada'}.`,
+        title: notificationTitle,
+        body: notificationBody,
         source: opportunity.source,
         amount: Number(opportunity.estimated_value ?? 0),
         url: opportunity.url ?? '/pendentes',

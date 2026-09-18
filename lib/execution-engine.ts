@@ -9,6 +9,17 @@ export type ExecutionState =
   | 'blocked'
   | 'failed'
 
+export type ExecutionLifecycleState =
+  | 'DISCOVERED'
+  | 'VALIDATED'
+  | 'READY'
+  | 'ACTION_REQUIRED'
+  | 'RUNNING'
+  | 'WAITING_PAYMENT'
+  | 'PAID'
+  | 'FAILED'
+  | 'REJECTED'
+
 export type HumanIntervention = {
   required: true
   reason: string
@@ -20,6 +31,7 @@ export type ExecutionRecord = {
   id: string
   opportunity: OpportunityInput
   state: ExecutionState
+  lifecycleState: ExecutionLifecycleState
   action: 'inspect' | 'prepare'
   createdAt: string
   updatedAt: string
@@ -56,6 +68,23 @@ function timestamp(now?: string) {
   return now ?? new Date().toISOString()
 }
 
+function lifecycleForState(state: ExecutionState): ExecutionLifecycleState {
+  switch (state) {
+    case 'queued':
+      return 'READY'
+    case 'running':
+      return 'RUNNING'
+    case 'waiting_human':
+      return 'ACTION_REQUIRED'
+    case 'completed':
+      return 'WAITING_PAYMENT'
+    case 'blocked':
+      return 'REJECTED'
+    case 'failed':
+      return 'FAILED'
+  }
+}
+
 export function createExecution(context: ExecutionContext): ExecutionRecord {
   const now = timestamp(context.now)
   const evaluator = context.modules.find((module) => module.module === 'avaliador')
@@ -74,6 +103,7 @@ export function createExecution(context: ExecutionContext): ExecutionRecord {
       id: context.id,
       opportunity: context.opportunity,
       state: 'blocked',
+      lifecycleState: 'REJECTED',
       action: 'inspect',
       createdAt: now,
       updatedAt: now,
@@ -86,6 +116,7 @@ export function createExecution(context: ExecutionContext): ExecutionRecord {
       id: context.id,
       opportunity: context.opportunity,
       state: 'waiting_human',
+      lifecycleState: 'ACTION_REQUIRED',
       action: 'prepare',
       createdAt: now,
       updatedAt: now,
@@ -102,6 +133,7 @@ export function createExecution(context: ExecutionContext): ExecutionRecord {
     id: context.id,
     opportunity: context.opportunity,
     state: 'queued',
+    lifecycleState: 'READY',
     action: 'prepare',
     createdAt: now,
     updatedAt: now,
@@ -131,6 +163,7 @@ export function transitionExecution(
     ...execution,
     ...details,
     state: nextState,
+    lifecycleState: lifecycleForState(nextState),
     updatedAt: timestamp(now),
   }
 }

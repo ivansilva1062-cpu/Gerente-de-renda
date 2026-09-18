@@ -3,7 +3,7 @@ import webPush from 'web-push'
 
 import { sql } from './db.ts'
 
-export type NotificationKind = 'earning' | 'human_action' | 'opportunity_ready' | 'error'
+export type NotificationKind = 'earning' | 'human_action' | 'opportunity_ready' | 'payment_pending' | 'financial_confirmation_required' | 'error'
 
 export type NotificationInput = {
   kind: NotificationKind
@@ -57,6 +57,10 @@ export function buildNotificationTitle(input: {
       return '⚠️ Ação necessária'
     case 'opportunity_ready':
       return '🚀 Oportunidade pronta'
+    case 'payment_pending':
+      return '⏳ Pagamento pendente'
+    case 'financial_confirmation_required':
+      return '💳 Confirmação financeira necessária'
     case 'error':
       return '⚠️ Gerente precisa de atenção'
     default:
@@ -84,6 +88,10 @@ export function buildNotificationBody(input: {
       return input.summary?.trim() || `A ação necessária ainda não foi concluída em ${sourceText}.`
     case 'opportunity_ready':
       return `${input.name || 'Oportunidade'} • ${currencyFormatter.format(amountValue)} • ainda não é ganho confirmado • ${sourceText}`
+    case 'payment_pending':
+      return `Pagamento pendente em ${sourceText} • ${currencyFormatter.format(amountValue)} • ${atText}.`
+    case 'financial_confirmation_required':
+      return input.summary?.trim() || `Confirmação financeira necessária em ${sourceText} • valor ${currencyFormatter.format(amountValue)} • ação obrigatória do usuário.`
     case 'error':
       return input.error?.trim() || 'Foi detectado um erro que exige atenção.'
     default:
