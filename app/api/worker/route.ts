@@ -14,6 +14,7 @@ import { persistExecution } from '@/lib/execution-store'
 import { requestHasActiveSession } from '@/lib/auth-server'
 import { isAuthorizedWorkerRequest } from '@/lib/worker-auth'
 import { runWorkerCycle } from '@/lib/worker-cycle'
+import { upsertNotificationEvent } from '@/lib/notifications'
 
 /*
  * ==========================================
@@ -714,6 +715,32 @@ async function inspectOpportunity(
           evidence: `Página oficial acessada e preparada sem autenticação, envio de dados ou confirmação financeira: ${pageTitle}`,
         })
 
+    if (requiresHuman) {
+      await upsertNotificationEvent({
+        kind: 'human_action',
+        ref: `opportunity:${opportunity.id}`,
+        title: '⚠️ Ação necessária',
+        body: `Ação requerida em ${opportunity.title}: ${sensitiveReason ?? 'revise a etapa indicada'}.`,
+        source: opportunity.source,
+        amount: Number(opportunity.estimated_value ?? 0),
+        url: opportunity.url ?? '/pendentes',
+        createdAt: new Date().toISOString(),
+      })
+    }
+
+    if (!requiresHuman && opportunity.url && opportunity.estimated_value) {
+      await upsertNotificationEvent({
+        kind: 'opportunity_ready',
+        ref: `opportunity-ready:${opportunity.id}`,
+        title: '🚀 Oportunidade pronta',
+        body: `Oportunidade pronta para execução: ${opportunity.title}. Ainda não é ganho confirmado.`,
+        source: opportunity.source,
+        amount: Number(opportunity.estimated_value ?? 0),
+        url: opportunity.url ?? '/oportunidades',
+        createdAt: new Date().toISOString(),
+      })
+    }
+
     await persistExecution(execution)
 
     await sql`
@@ -787,6 +814,30 @@ async function inspectOpportunity(
 
       nextAction:
         executionNextStep(execution),
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : 'Erro ao inspecionar oportunidade.'
+    execution = transitionExecution(execution, 'failed', {
+      error: detail,
+    })
+    await persistExecution(execution)
+
+    await upsertNotificationEvent({
+      kind: 'error',
+      ref: `execution-error:${opportunity.id}`,
+      title: '⚠️ Gerente precisa de atenção',
+      body: detail,
+      source: opportunity.source,
+      amount: Number(opportunity.estimated_value ?? 0),
+      url: '/pendentes',
+      createdAt: new Date().toISOString(),
+    })
+
+    return {
+      success: false,
+      state: execution.state,
+      reason: detail,
+      execution,
     }
   } finally {
     /*

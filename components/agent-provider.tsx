@@ -14,6 +14,7 @@ import type {
   ActivityEvent,
   AgentStatus,
   Integration,
+  NotificationItem,
   Opportunity,
   Task,
   Transaction,
@@ -40,6 +41,8 @@ interface AgentContextValue {
   integrations: Integration[]
   runningTasks: Task[]
   pendingTasks: Task[]
+  notifications: NotificationItem[]
+  unreadNotifications: number
 
   stop: () => void
   resume: () => void
@@ -61,6 +64,11 @@ interface AgentContextValue {
     description: string,
     source: string,
   ) => Promise<void>
+
+  refreshNotifications: () => Promise<void>
+  markNotificationAsRead: (id: string) => Promise<void>
+  clearReadNotifications: () => Promise<void>
+  enableNotifications: () => Promise<boolean>
 
   refreshOpportunities: () => Promise<void>
 }
@@ -182,6 +190,9 @@ export function AgentProvider({
     useState<Integration[]>(
       seedIntegrations,
     )
+
+  const [notifications, setNotifications] =
+    useState<NotificationItem[]>([])
 
   const [workerCycle, setWorkerCycle] =
     useState({
@@ -630,6 +641,107 @@ export function AgentProvider({
    * ATUALIZAR OPORTUNIDADES
    * ==========================================
    */
+
+  const refreshNotifications =
+    useCallback(
+      async () => {
+        try {
+          const response = await fetch('/api/notifications', { cache: 'no-store' })
+          if (!response.ok) throw new Error('Falha ao consultar notificações.')
+          const data = await response.json() as { notifications?: NotificationItem[] }
+          setNotifications(Array.isArray(data.notifications) ? data.notifications : [])
+        } catch (error) {
+          console.error('Erro ao carregar notificações:', error)
+          setNotifications([])
+        }
+      },
+      [],
+    )
+
+  const markNotificationAsRead =
+    useCallback(
+      async (id: string) => {
+        if (!id) return
+        try {
+          const response = await fetch('/api/notifications', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id, action: 'mark-read' }),
+          })
+          if (response.ok) {
+            setNotifications((previous) => previous.map((item) => item.id === id ? { ...item, read: true } : item))
+          }
+        } catch (error) {
+          console.error('Erro ao marcar notificação como lida:', error)
+        }
+      },
+      [],
+    )
+
+  const clearReadNotifications =
+    useCallback(
+      async () => {
+        try {
+          const response = await fetch('/api/notifications', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'clear-read' }),
+          })
+          if (response.ok) {
+            setNotifications((previous) => previous.filter((item) => !item.read))
+          }
+        } catch (error) {
+          console.error('Erro ao limpar notificações lidas:', error)
+        }
+      },
+      [],
+    )
+
+  const enableNotifications =
+    useCallback(
+      async () => {
+        if (!('Notification' in window) || !('serviceWorker' in navigator)) {
+          if (typeof window !== 'undefined') {
+            window.alert('Este navegador não suporta notificações push do iPhone/iOS. No iPhone, use o PWA em tela cheia e habilite "Permitir notificações" no menu do Safari/Share.')
+          }
+          return false
+        }
+
+        const permission = await Notification.requestPermission()
+        if (permission !== 'granted') {
+          return false
+        }
+
+        const registration = await navigator.serviceWorker.ready
+        const subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: undefined,
+        })
+
+        const response = await fetch('/api/notifications', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'subscribe',
+            endpoint: subscription.endpoint,
+            keys: {
+              p256dh: btoa(String.fromCharCode(...Array.from(new Uint8Array(subscription.getKey('p256dh') ?? new Uint8Array())))),
+              auth: btoa(String.fromCharCode(...Array.from(new Uint8Array(subscription.getKey('auth') ?? new Uint8Array())))),
+            },
+            userAgent: navigator.userAgent,
+          }),
+        })
+
+        if (!response.ok) {
+          console.error('Falha ao registrar subscription no servidor.')
+          return false
+        }
+
+        await refreshNotifications()
+        return true
+      },
+      [refreshNotifications],
+    )
 
   const refreshOpportunities =
     useCallback(
@@ -1593,9 +1705,11 @@ export function AgentProvider({
 
   useEffect(() => {
     void refreshEarnings()
+    void refreshNotifications()
     void runDiscoveryCycle()
   }, [
     refreshEarnings,
+    refreshNotifications,
     runDiscoveryCycle,
   ])
 
@@ -1702,6 +1816,11 @@ export function AgentProvider({
     refreshWorkerCycleSummary()
   }, [refreshWorkerCycleSummary])
 
+  const unreadNotifications = useMemo(
+    () => notifications.filter((notification) => !notification.read).length,
+    [notifications],
+  )
+
   const value:
     AgentContextValue = {
     status,
@@ -1726,6 +1845,8 @@ export function AgentProvider({
     runningTasks,
 
     pendingTasks,
+    notifications,
+    unreadNotifications,
 
     stop,
 
@@ -1738,6 +1859,11 @@ export function AgentProvider({
     toggleIntegration,
 
     registerConfirmedEarning,
+
+    refreshNotifications,
+    markNotificationAsRead,
+    clearReadNotifications,
+    enableNotifications,
 
     refreshOpportunities,
   }

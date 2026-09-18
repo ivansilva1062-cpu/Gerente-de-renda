@@ -14,6 +14,10 @@ import {
   Menu,
   X,
   Bot,
+  Bell,
+  CheckCheck,
+  Trash2,
+  Smartphone,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAgent } from '@/components/agent-provider'
@@ -82,6 +86,7 @@ function SidebarBrand() {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false)
+  const { notifications, unreadNotifications, markNotificationAsRead, clearReadNotifications, enableNotifications } = useAgent()
 
   return (
     <div className="flex min-h-screen bg-background">
@@ -145,6 +150,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <span className="text-sm font-semibold">Gerente de Renda</span>
           </div>
           <div className="ml-auto flex items-center gap-3">
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => void enableNotifications()}
+                className="flex items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
+              >
+                <Smartphone className="size-3.5" />
+                <span>Ativar notificações</span>
+              </button>
+            </div>
+            <div className="relative">
+              <button
+                type="button"
+                className="flex items-center gap-2 rounded-lg border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
+                aria-label="Notificações"
+                title="Notificações"
+              >
+                <Bell className="size-3.5" />
+                <span>Notificações</span>
+                {unreadNotifications > 0 && (
+                  <span className="flex size-5 items-center justify-center rounded-full bg-primary text-[10px] font-semibold text-primary-foreground">
+                    {unreadNotifications}
+                  </span>
+                )}
+              </button>
+            </div>
             <Badge variant="outline" className="hidden font-mono sm:inline-flex">
               modo demonstração
             </Badge>
@@ -153,7 +184,58 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           </div>
         </header>
-        <main className="flex-1 px-4 py-6 lg:px-8 lg:py-8">{children}</main>
+        <main className="flex-1 px-4 py-6 lg:px-8 lg:py-8">
+          <div className="mb-6 rounded-2xl border border-border bg-card p-4 shadow-sm">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Bell className="size-4 text-primary" />
+                <h2 className="text-sm font-semibold">Notificações</h2>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => void clearReadNotifications()}
+                  className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted"
+                >
+                  <Trash2 className="size-3" />
+                  Limpar lidas
+                </button>
+              </div>
+            </div>
+            <div className="space-y-2">
+              {notifications.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
+                  Nenhuma notificação no momento.
+                </p>
+              ) : notifications.map((notification) => (
+                <div key={notification.id} className={cn('rounded-lg border p-3 text-sm', notification.read ? 'border-border bg-muted/30' : 'border-primary/40 bg-primary/5')}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold text-foreground">{notification.title}</p>
+                      <p className="mt-1 text-muted-foreground">{notification.body}</p>
+                    </div>
+                    {!notification.read && (
+                      <button
+                        type="button"
+                        onClick={() => void markNotificationAsRead(notification.id)}
+                        className="inline-flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[10px] hover:bg-muted"
+                      >
+                        <CheckCheck className="size-3" />
+                        Ler
+                      </button>
+                    )}
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                    {notification.source && <span>{notification.source}</span>}
+                    {notification.amount != null && <span>• {new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(notification.amount)}</span>}
+                    <span>• {new Date(notification.createdAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          {children}
+        </main>
       </div>
     </div>
   )

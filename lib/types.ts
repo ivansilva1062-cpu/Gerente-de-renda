@@ -283,3 +283,16 @@ export interface Integration {
 
   connected: boolean
 }
+
+export interface NotificationItem {
+  id: string
+  kind: 'earning' | 'human_action' | 'opportunity_ready' | 'error'
+  eventKey: string
+  title: string
+  body: string
+  source: string | null
+  amount: number | null
+  url: string | null
+  read: boolean
+  createdAt: string
+}

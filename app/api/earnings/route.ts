@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { sql } from '@/lib/db'
 import { requestHasActiveSession } from '@/lib/auth-server'
+import { upsertNotificationEvent } from '@/lib/notifications'
 
 export async function GET() {
   if (!(await requestHasActiveSession())) {
@@ -108,6 +109,19 @@ export async function POST(request: Request) {
         amount,
         created_at
     `
+
+    if (result.length > 0) {
+      await upsertNotificationEvent({
+        kind: 'earning',
+        ref: String(result[0].id),
+        title: '💰 Ganho confirmado!',
+        body: `${result[0].description} • ${result[0].source}`,
+        source: String(result[0].source),
+        amount: Number(result[0].amount),
+        url: '/financeiro',
+        createdAt: String(result[0].created_at),
+      })
+    }
 
     return NextResponse.json({
       success: true,
