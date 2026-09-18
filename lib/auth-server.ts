@@ -74,6 +74,18 @@ function sessionSecret() {
   return secret
 }
 
+export function isLoginPinConfigured() {
+  return /^\d{6}$/.test(process.env.AUTH_LOGIN_PIN ?? '')
+}
+
+export function verifyLoginPin(value: string) {
+  const configuredPin = process.env.AUTH_LOGIN_PIN
+  if (!configuredPin || !/^\d{6}$/.test(configuredPin) || !/^\d{6}$/.test(value)) return false
+  const submitted = Buffer.from(value)
+  const expected = Buffer.from(configuredPin)
+  return submitted.length === expected.length && timingSafeEqual(submitted, expected)
+}
+
 function base64url(value: Uint8Array) {
   return Buffer.from(value).toString('base64url')
 }

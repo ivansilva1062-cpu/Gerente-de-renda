@@ -2,9 +2,6 @@ import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 import './globals.css'
-import { AgentProvider } from '@/components/agent-provider'
-import { AppShell } from '@/components/app-shell'
-import { PwaRegister } from '@/components/pwa-register'
 import { AuthGate } from '@/components/auth-gate'
 
 const geistSans = Geist({
@@ -51,12 +48,7 @@ export default function RootLayout({
   return (
     <html lang="pt-BR" className={`${geistSans.variable} ${geistMono.variable} bg-background`}>
       <body className="font-sans antialiased">
-        <PwaRegister />
-        <AuthGate>
-          <AgentProvider>
-            <AppShell>{children}</AppShell>
-          </AgentProvider>
-        </AuthGate>
+        <AuthGate>{children}</AuthGate>
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
     </html>

@@ -1,326 +1,126 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
+import { LockKeyhole } from 'lucide-react'
+import { AgentProvider } from '@/components/agent-provider'
+import { AppShell } from '@/components/app-shell'
+import { PwaRegister } from '@/components/pwa-register'
 
-type Session = {
-  authenticated: boolean
-  expiresAt?: number
-  idleTimeoutSeconds?: number
-}
-
-type AuthState = {
+type AuthStatus = {
   configured: boolean
   authenticated: boolean
-  session?: Session
+  session?: {
+    active: boolean
+    idleTimeoutSeconds: number
+  }
 }
 
-async function authRequest(body: Record<string, unknown>) {
-  const response = await fetch('/api/auth', {
+async function authRequest(action: string, response?: unknown) {
+  const result = await fetch('/api/auth', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     credentials: 'same-origin',
-    body: JSON.stringify(body),
+    body: JSON.stringify({ action, response }),
   })
-
-  const data = await response.json().catch(() => ({}))
-
-  if (!response.ok) {
-    throw new Error(
-      data?.error ||
-        'Não foi possível concluir a autenticação.',
-    )
-  }
-
+  const data = await result.json() as Record<string, unknown>
+  if (!result.ok) throw new Error(String(data.error ?? 'Falha de autenticação.'))
   return data
 }
 
-export function AuthScreen({
-  onAuthenticated,
-}: {
-  onAuthenticated: () => void
-}) {
-  const pinInputRef = useRef<HTMLInputElement | null>(null)
-  const busyRef = useRef(false)
-
-  const [busy, setBusy] = useState(false)
-  const [pin, setPin] = useState('')
+export function AuthGate({ children }: { children: React.ReactNode }) {
+  const [status, setStatus] = useState<AuthStatus | null>(null)
   const [error, setError] = useState('')
-
-  const loginWithPin = async () => {
-    if (busyRef.current) return
-
-    busyRef.current = true
-    setBusy(true)
-    setError('')
-
-    try {
-      if (!/^\d{6}$/.test(pin)) {
-        throw new Error('Digite o PIN de 6 números.')
-      }
-
-      await authRequest({
-        action: 'pin-login',
-        pin,
-      })
-
-      onAuthenticated()
-    } catch (err) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : 'Não foi possível entrar.'
-
-      setError(message)
-    } finally {
-      busyRef.current = false
-      setBusy(false)
-    }
-  }
-
-  return (
-    <main
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 24,
-        background: '#0b0b0b',
-      }}
-    >
-      <section
-        style={{
-          width: '100%',
-          maxWidth: 420,
-          padding: 32,
-          borderRadius: 20,
-          background: '#151515',
-          border: '1px solid #2a2a2a',
-          color: '#fff',
-          textAlign: 'center',
-        }}
-      >
-        <div
-          style={{
-            fontSize: 48,
-            marginBottom: 16,
-          }}
-        >
-          🔐
-        </div>
-
-        <h1
-          style={{
-            margin: 0,
-            fontSize: 28,
-            fontWeight: 700,
-          }}
-        >
-          Gerente de Renda
-        </h1>
-
-        <p
-          style={{
-            marginTop: 12,
-            marginBottom: 24,
-            color: '#aaa',
-            lineHeight: 1.5,
-          }}
-        >
-          Digite seu PIN para acessar o Gerente.
-        </p>
-
-        <input
-          ref={pinInputRef}
-          type="password"
-          inputMode="numeric"
-          pattern="[0-9]*"
-          maxLength={6}
-          autoComplete="off"
-          placeholder="PIN de 6 números"
-          value={pin}
-          onChange={(event) => {
-            setPin(
-              event.target.value
-                .replace(/\D/g, '')
-                .slice(0, 6),
-            )
-            setError('')
-          }}
-          onKeyDown={(event) => {
-            if (
-              event.key === 'Enter' &&
-              pin.length === 6
-            ) {
-              void loginWithPin()
-            }
-          }}
-          style={{
-            width: '100%',
-            boxSizing: 'border-box',
-            padding: '16px',
-            borderRadius: 12,
-            border: '1px solid #444',
-            background: '#0b0b0b',
-            color: '#fff',
-            fontSize: 22,
-            textAlign: 'center',
-            letterSpacing: 8,
-            outline: 'none',
-          }}
-        />
-
-        <button
-          type="button"
-          disabled={busy || pin.length !== 6}
-          onClick={() => {
-            void loginWithPin()
-          }}
-          style={{
-            width: '100%',
-            marginTop: 14,
-            padding: '16px 20px',
-            border: 0,
-            borderRadius: 12,
-            background:
-              busy || pin.length !== 6
-                ? '#555'
-                : '#fff',
-            color: '#000',
-            fontSize: 17,
-            fontWeight: 700,
-          }}
-        >
-          {busy ? 'Entrando...' : 'Entrar'}
-        </button>
-
-        {error && (
-          <div
-            style={{
-              marginTop: 20,
-              padding: 14,
-              borderRadius: 10,
-              background: '#2a1515',
-              color: '#ffb3b3',
-              fontSize: 14,
-              lineHeight: 1.45,
-            }}
-          >
-            {error}
-          </div>
-        )}
-      </section>
-    </main>
-  )
-}
-
-export function AuthGate({
-  children,
-}: {
-  children: React.ReactNode
-}) {
   const pathname = usePathname()
 
-  const [loading, setLoading] = useState(true)
-  const [auth, setAuth] =
-    useState<AuthState | null>(null)
-
-  const loadAuth = async () => {
-    try {
-      const response = await fetch('/api/auth', {
-        credentials: 'same-origin',
-        cache: 'no-store',
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(
-          data?.error ||
-            'Falha ao verificar autenticação.',
-        )
-      }
-
-      setAuth(data)
-    } catch (error) {
-      console.error(
-        'Erro ao verificar autenticação:',
-        error,
-      )
-
-      setAuth({
-        configured: false,
-        authenticated: false,
-      })
-    } finally {
-      setLoading(false)
-    }
+  async function refresh() {
+    const response = await fetch('/api/auth', { credentials: 'same-origin', cache: 'no-store' })
+    setStatus(await response.json() as AuthStatus)
   }
 
   useEffect(() => {
-    if (pathname === '/acesso') {
-      setLoading(false)
-      return
-    }
-
-    void loadAuth()
+    if (pathname === '/acesso') return
+    void refresh().catch((reason: unknown) => setError(reason instanceof Error ? reason.message : 'Não foi possível consultar a autenticação.'))
   }, [pathname])
 
   useEffect(() => {
-    if (!auth?.authenticated) return
+    if (!status?.authenticated) return
 
-    const heartbeat = window.setInterval(
-      async () => {
-        try {
-          await authRequest({
-            action: 'heartbeat',
-          })
-        } catch {
-          await loadAuth()
-        }
-      },
-      60_000,
-    )
+    let lastActivity = Date.now()
+    let lastHeartbeat = Date.now()
+    let locking = false
+    let timer: ReturnType<typeof setInterval> | undefined
+    const markActivity = () => {
+      lastActivity = Date.now()
+    }
+    const lock = async () => {
+      if (locking) return
+      locking = true
+      await authRequest('block').catch(() => undefined)
+      setStatus((current) => current ? { ...current, authenticated: false, session: current.session ? { ...current.session, active: false } : current.session } : current)
+    }
+
+    const timeout = (status.session?.idleTimeoutSeconds ?? 900) * 1000
+    window.addEventListener('pointerdown', markActivity, { passive: true })
+    window.addEventListener('keydown', markActivity, { passive: true })
+    window.addEventListener('touchstart', markActivity, { passive: true })
+    timer = setInterval(() => {
+      const now = Date.now()
+      if (now - lastActivity >= timeout) {
+        void lock()
+      } else if (now - lastHeartbeat >= 60_000) {
+        lastHeartbeat = now
+        void authRequest('heartbeat').catch(() => lock())
+      }
+    }, 15_000)
 
     return () => {
-      window.clearInterval(heartbeat)
+      window.removeEventListener('pointerdown', markActivity)
+      window.removeEventListener('keydown', markActivity)
+      window.removeEventListener('touchstart', markActivity)
+      if (timer) clearInterval(timer)
     }
-  }, [auth?.authenticated])
+  }, [status?.authenticated, status?.session?.idleTimeoutSeconds])
 
-  if (pathname === '/acesso') {
-    return <>{children}</>
+  if (pathname === '/acesso') return <>{children}</>
+
+  if (!status) {
+    return <AuthScreen title="Verificando proteção" description="Consultando a sessão segura do Gerente..." error={error} />
   }
 
-  if (loading) {
-    return (
-      <main
-        style={{
-          minHeight: '100vh',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          background: '#0b0b0b',
-          color: '#fff',
-          fontSize: 18,
-        }}
-      >
-        Carregando Gerente de Renda...
-      </main>
-    )
-  }
-
-  if (!auth?.authenticated) {
+  if (!status.authenticated) {
     return (
       <AuthScreen
-        onAuthenticated={() => {
-          void loadAuth()
-        }}
+        title="Acesso necessário"
+        description="A sessão do Gerente não está ativa. Abra a página de acesso para entrar com o PIN."
       />
     )
   }
 
-  return <>{children}</>
+  return <><PwaRegister /><AgentProvider><AppShell>{children}</AppShell></AgentProvider></>
+}
+
+function AuthScreen({
+  title,
+  description,
+  error,
+}: {
+  title: string
+  description: string
+  error?: string
+}) {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-background px-5 py-10">
+      <section className="w-full max-w-md space-y-6 rounded-2xl border border-border bg-card p-7 shadow-sm">
+        <div className="flex size-14 items-center justify-center rounded-xl bg-primary/10 text-primary">
+          <LockKeyhole className="size-7" />
+        </div>
+        <div className="space-y-2">
+          <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+          <p className="text-sm leading-6 text-muted-foreground">{description}</p>
+        </div>
+        {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      </section>
+    </main>
+  )
 }

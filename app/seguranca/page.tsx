@@ -28,7 +28,7 @@ const items: SecurityItem[] = [
   {
     icon: KeyRound,
     title: 'Autenticação de acesso',
-    description: 'Passkey protegida pelo autenticador do dispositivo, com Face ID ou Touch ID quando disponível.',
+    description: 'PIN de 6 números validado no servidor, com sessão protegida por cookie HttpOnly.',
     status: 'ready',
   },
   {
@@ -121,15 +121,15 @@ export default function SecurityPage() {
           <div className="flex items-center justify-between gap-3">
             <div>
               <CardTitle className="flex items-center gap-2"><Clock3 className="size-5" /> Sessão do Gerente</CardTitle>
-              <CardDescription>O painel exige uma sessão WebAuthn ativa e é bloqueado após inatividade.</CardDescription>
+              <CardDescription>O painel exige uma sessão autenticada por PIN e é bloqueado após inatividade.</CardDescription>
             </div>
             <Badge variant={session?.active ? 'success' : 'warning'}>{session?.active ? 'Ativa' : 'Inativa'}</Badge>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-3 text-sm sm:grid-cols-3">
-            <div><p className="text-muted-foreground">Dispositivo autenticado</p><p className="font-medium">Passkey deste dispositivo</p></div>
-            <div><p className="text-muted-foreground">Passkey cadastrada</p><p className="font-medium">Sim, protegida pelo sistema</p></div>
+            <div><p className="text-muted-foreground">Método de acesso</p><p className="font-medium">PIN de 6 números</p></div>
+            <div><p className="text-muted-foreground">Sessão protegida</p><p className="font-medium">Cookie HttpOnly</p></div>
             <div><p className="text-muted-foreground">Última atividade</p><p className="font-medium">{session?.lastSeenAt ? new Date(session.lastSeenAt).toLocaleString('pt-BR') : 'Agora'}</p></div>
           </div>
           <div className="flex flex-wrap items-end justify-between gap-4 border-t border-border/70 pt-4">
