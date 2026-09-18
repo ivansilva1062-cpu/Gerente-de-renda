@@ -198,6 +198,7 @@ test('resume os estados do painel sem confundir estimativa com conclusão', () =
     queued: 1,
     running: 1,
     waiting_human: 2,
+    waiting_external: 0,
     completed: 1,
     blocked: 1,
     failed: 1,

@@ -5,6 +5,7 @@ export type ExecutionState =
   | 'queued'
   | 'running'
   | 'waiting_human'
+  | 'waiting_external'
   | 'completed'
   | 'blocked'
   | 'failed'
@@ -15,6 +16,7 @@ export type ExecutionLifecycleState =
   | 'READY'
   | 'ACTION_REQUIRED'
   | 'RUNNING'
+  | 'WAITING_EXTERNAL'
   | 'WAITING_PAYMENT'
   | 'PAID'
   | 'FAILED'
@@ -76,6 +78,8 @@ function lifecycleForState(state: ExecutionState): ExecutionLifecycleState {
       return 'RUNNING'
     case 'waiting_human':
       return 'ACTION_REQUIRED'
+    case 'waiting_external':
+      return 'WAITING_EXTERNAL'
     case 'completed':
       return 'WAITING_PAYMENT'
     case 'blocked':
@@ -142,8 +146,9 @@ export function createExecution(context: ExecutionContext): ExecutionRecord {
 
 const transitions: Record<ExecutionState, ExecutionState[]> = {
   queued: ['running', 'waiting_human', 'blocked', 'failed'],
-  running: ['completed', 'waiting_human', 'blocked', 'failed'],
+  running: ['completed', 'waiting_human', 'waiting_external', 'blocked', 'failed'],
   waiting_human: ['queued', 'running', 'blocked', 'failed'],
+  waiting_external: ['queued', 'running', 'completed', 'blocked', 'failed'],
   completed: [],
   blocked: [],
   failed: [],
@@ -172,6 +177,7 @@ export type ExecutionSummary = {
   queued: number
   running: number
   waiting_human: number
+  waiting_external: number
   completed: number
   blocked: number
   failed: number
@@ -182,6 +188,7 @@ export function summarizeExecutionStates(states: Array<Pick<ExecutionRecord, 'st
     queued: 0,
     running: 0,
     waiting_human: 0,
+    waiting_external: 0,
     completed: 0,
     blocked: 0,
     failed: 0,

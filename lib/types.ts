@@ -129,6 +129,17 @@ export type TaskState =
   | 'pending'
   | 'done'
 
+export type QueueState =
+  | 'READY'
+  | 'EXECUTING'
+  | 'WAITING_EXTERNAL'
+  | 'WAITING_PAYMENT'
+  | 'ACTION_REQUIRED'
+  | 'MISSING_DATA'
+  | 'BLOCKED'
+  | 'COMPLETED'
+  | 'EXPIRED'
+
 export interface Task {
   id: string
 
@@ -153,6 +164,10 @@ export interface Task {
   source: string
 
   state: TaskState
+
+  queueState?: QueueState
+
+  queueReason?: string
 
   /*
    * Valor estimado.

@@ -35,6 +35,9 @@ export function executionNextStep(execution: ExecutionRecord) {
   if (execution.state === 'waiting_human') {
     return execution.intervention?.action ?? 'Aguardando ação humana na fonte oficial.'
   }
+  if (execution.state === 'waiting_external') {
+    return 'Etapa já enviada pelo agente; aguardando processamento da própria plataforma, sem bloquear as demais oportunidades.'
+  }
   if (execution.state === 'blocked') {
     return `Oportunidade bloqueada pelo Gerente. ${execution.error ?? 'Não executar.'}`
   }

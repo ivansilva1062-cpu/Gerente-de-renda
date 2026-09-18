@@ -3,7 +3,7 @@ import webPush from 'web-push'
 
 import { sql } from './db.ts'
 
-export type NotificationKind = 'earning' | 'human_action' | 'opportunity_ready' | 'payment_pending' | 'financial_confirmation_required' | 'error'
+export type NotificationKind = 'earning' | 'human_action' | 'opportunity_ready' | 'payment_pending' | 'financial_confirmation_required' | 'blocked_external' | 'error'
 
 export type NotificationInput = {
   kind: NotificationKind
@@ -61,6 +61,8 @@ export function buildNotificationTitle(input: {
       return '⏳ Pagamento pendente'
     case 'financial_confirmation_required':
       return '💳 Confirmação financeira necessária'
+    case 'blocked_external':
+      return '⏳ Aguardando processamento externo'
     case 'error':
       return '⚠️ Gerente precisa de atenção'
     default:
@@ -92,6 +94,8 @@ export function buildNotificationBody(input: {
       return `Pagamento pendente em ${sourceText} • ${currencyFormatter.format(amountValue)} • ${atText}.`
     case 'financial_confirmation_required':
       return input.summary?.trim() || `Confirmação financeira necessária em ${sourceText} • valor ${currencyFormatter.format(amountValue)} • ação obrigatória do usuário.`
+    case 'blocked_external':
+      return input.summary?.trim() || `A etapa disponível já foi enviada em ${sourceText}; agora depende do processamento da própria plataforma.`
     case 'error':
       return input.error?.trim() || 'Foi detectado um erro que exige atenção.'
     default:

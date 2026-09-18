@@ -52,7 +52,7 @@ export async function POST(request: Request) {
 
     if (action === 'create') {
       const notification = await upsertNotificationEvent({
-        kind: String(body.kind ?? 'error') as 'earning' | 'human_action' | 'opportunity_ready' | 'error',
+        kind: String(body.kind ?? 'error') as 'earning' | 'human_action' | 'opportunity_ready' | 'payment_pending' | 'financial_confirmation_required' | 'blocked_external' | 'error',
         ref: String(body.ref ?? randomUUID()),
         title: typeof body.title === 'string' ? body.title : undefined,
         body: typeof body.body === 'string' ? body.body : undefined,

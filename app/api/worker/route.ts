@@ -4,6 +4,7 @@ import Browserbase from '@browserbasehq/sdk'
 
 import { sql } from '@/lib/db'
 import { executionNextStep, planManagerExecution } from '@/lib/manager-execution'
+import { decideManagerAction } from '@/lib/manager-decision'
 import {
   createExecution,
   isSensitiveAction,
@@ -109,8 +110,12 @@ async function getReusableBrowserSession(browserbase: Browserbase) {
 
 type AuthorizedFormData = Record<string, string | undefined>
 
-async function autoFillAuthorizedForm(page: { evaluate: (fn: (data: AuthorizedFormData) => void, data?: AuthorizedFormData) => Promise<unknown> }, profile: Awaited<ReturnType<typeof getAuthorizedProfile>>) {
-  if (!profile) return
+type EvaluablePage = {
+  evaluate: <T>(fn: (data: AuthorizedFormData) => T, data?: AuthorizedFormData) => Promise<T>
+}
+
+async function autoFillAuthorizedForm(page: EvaluablePage, profile: Awaited<ReturnType<typeof getAuthorizedProfile>>) {
+  if (!profile) return 0
 
   const fillable = {
     name: profile.name,
@@ -124,7 +129,8 @@ async function autoFillAuthorizedForm(page: { evaluate: (fn: (data: AuthorizedFo
     country: profile.country,
   }
 
-  await page.evaluate((data) => {
+  return page.evaluate((data) => {
+    let filledCount = 0
     const fill = (selector: string, value?: string) => {
       if (!value) return false
       const input = document.querySelector(selector) as HTMLInputElement | null
@@ -150,9 +156,65 @@ async function autoFillAuthorizedForm(page: { evaluate: (fn: (data: AuthorizedFo
     ] as const
 
     for (const [selector, value] of selectors) {
-      if (value) fill(selector, value)
+      if (value && fill(selector, value)) filledCount += 1
     }
+
+    return filledCount
   }, fillable)
+}
+
+/*
+ * ==========================================
+ * DETECTA CAMPOS SENSÍVEIS OU ANTIFRAUDE
+ * ==========================================
+ *
+ * Se a página exigir senha, upload de arquivo,
+ * dados de cartão/Pix ou CAPTCHA, o agente NUNCA
+ * envia o formulário automaticamente.
+ */
+
+async function hasSensitiveFormFields(page: EvaluablePage) {
+  return page.evaluate(() => {
+    const sensitiveInput = document.querySelector(
+      'input[type=password], input[type=file], input[name*=card], input[name*=cvv], input[name*=pix], input[name*=cpf], input[name*=cnpj]',
+    )
+    const captchaMarkup = document.querySelector(
+      '.g-recaptcha, .h-captcha, iframe[src*="captcha"], [data-sitekey]',
+    )
+    return Boolean(sensitiveInput || captchaMarkup)
+  })
+}
+
+/*
+ * ==========================================
+ * ENVIA O FORMULÁRIO JÁ PREENCHIDO
+ * ==========================================
+ *
+ * Só é chamado quando:
+ * - existem campos preenchidos com dados já autorizados;
+ * - não há campos sensíveis nem CAPTCHA;
+ * - a etapa não exige criação de credencial nova.
+ */
+
+async function trySubmitAuthorizedForm(page: EvaluablePage) {
+  return page.evaluate(() => {
+    const submitButton = document.querySelector(
+      'button[type=submit], input[type=submit], form button:not([type=button])',
+    ) as HTMLElement | null
+
+    if (submitButton) {
+      submitButton.click()
+      return true
+    }
+
+    const form = document.querySelector('form')
+    if (form instanceof HTMLFormElement) {
+      form.requestSubmit ? form.requestSubmit() : form.submit()
+      return true
+    }
+
+    return false
+  })
 }
 
 async function ensureManagerColumns() {
@@ -194,6 +256,21 @@ const HUMAN_ACTION_SIGNALS = [
   'identity verification',
   'verify your email',
   'upload your id',
+]
+
+/*
+ * ==========================================
+ * SINAIS DE AÇÃO AUTOMATIZÁVEL
+ * ==========================================
+ *
+ * Estes sinais indicam um formulário ou etapa
+ * que o próprio agente pode preencher e enviar
+ * usando os dados já autorizados pelo operador,
+ * desde que não existam campos sensíveis nem
+ * CAPTCHA na página.
+ */
+
+const SOFT_ACTION_SIGNALS = [
   'apply now',
   'submit application',
   'complete your profile',
@@ -203,6 +280,43 @@ const HUMAN_ACTION_SIGNALS = [
   'participate in the study',
   'accept the task',
   'claim task',
+]
+
+/*
+ * ==========================================
+ * SINAIS DE CAPTCHA / ANTIFRAUDE
+ * ==========================================
+ */
+
+const CAPTCHA_SIGNALS = [
+  'captcha',
+  'recaptcha',
+  'hcaptcha',
+  "i'm not a robot",
+  'prove you are human',
+]
+
+/*
+ * ==========================================
+ * SINAIS DE ESPERA EXTERNA
+ * ==========================================
+ *
+ * A tarefa já foi enviada/preparada pelo agente,
+ * mas depende agora da própria plataforma
+ * (revisão, aprovação, processamento), não do usuário.
+ */
+
+const EXTERNAL_WAIT_SIGNALS = [
+  'application submitted',
+  'application received',
+  'under review',
+  'pending approval',
+  'we will contact you',
+  'thank you for applying',
+  'thank you for your submission',
+  'em análise',
+  'aguardando aprovação',
+  'candidatura enviada',
 ]
 
 /*
@@ -360,7 +474,7 @@ async function getExcludedExecutionIds() {
     const rows = await sql`
       SELECT opportunity_id
       FROM execution_runs
-      WHERE state IN ('queued', 'running', 'waiting_human', 'completed', 'blocked')
+      WHERE state IN ('queued', 'running', 'waiting_human', 'waiting_external', 'completed', 'blocked')
         AND opportunity_id IS NOT NULL
     `
     return rows.map((row) => String(row.opportunity_id))
@@ -620,8 +734,9 @@ async function inspectOpportunity(
     )
 
     const authorizedProfile = await getAuthorizedProfile()
+    let filledFieldCount = 0
     if (authorizedProfile) {
-      await autoFillAuthorizedForm(page, authorizedProfile)
+      filledFieldCount = await autoFillAuthorizedForm(page, authorizedProfile)
     }
 
     /*
@@ -672,8 +787,29 @@ async function inspectOpportunity(
 
     /*
      * ======================================
-     * IDENTIFICA PAGAMENTO
+     * IDENTIFICA AÇÃO AUTOMATIZÁVEL
      * ======================================
+     */
+
+    const softSignals = findSignals(cleanedText, SOFT_ACTION_SIGNALS)
+
+    /*
+     * ======================================
+     * IDENTIFICA CAPTCHA / ANTIFRAUDE
+     * ======================================
+     */
+
+    const captchaSignals = findSignals(cleanedText, CAPTCHA_SIGNALS)
+    const captchaDetected = captchaSignals.length > 0 || (await hasSensitiveFormFields(page))
+
+    /*
+     * ======================================
+     * IDENTIFICA MENÇÃO DE PAGAMENTO
+     * ======================================
+     *
+     * Apenas informativo: mencionar "pago" ou
+     * "recompensa" não exige, por si só,
+     * intervenção humana.
      */
 
     const paymentSignals =
@@ -694,27 +830,50 @@ async function inspectOpportunity(
      * Mesmo que exista um botão:
      *
      * - não clica em cadastro;
-     * - não envia formulário;
-     * - não informa identidade;
-     * - não informa senha;
-     * - não informa cartão;
+     * - não envia formulário com senha, cartão, Pix ou identidade;
+     * - não contorna CAPTCHA;
      * - não confirma pagamento.
      */
 
     const requiresHuman =
       opportunity.requires_user_action ||
       opportunity.requires_signup ||
-      humanSignals.length >
-        0 ||
-      paymentSignals.length > 0 ||
+      humanSignals.length > 0 ||
+      financialConfirmationRequired ||
+      captchaDetected ||
       isSensitiveAction(cleanedText)
+
+    /*
+     * ======================================
+     * EXECUÇÃO AUTÔNOMA DE ETAPA SEGURA
+     * ======================================
+     *
+     * Quando a etapa não exige credencial, identidade,
+     * pagamento ou CAPTCHA, o agente preenche e envia
+     * o formulário com os dados já autorizados pelo operador.
+     */
+
+    let autoSubmitted = false
+    if (!requiresHuman && softSignals.length > 0 && filledFieldCount > 0) {
+      autoSubmitted = await trySubmitAuthorizedForm(page)
+      if (autoSubmitted) {
+        await page.waitForTimeout(1500)
+      }
+    }
+
+    const postSubmitText = autoSubmitted
+      ? normalizeText(await page.locator('body').innerText({ timeout: 10_000 }).catch(() => cleanedText)).slice(0, 12_000)
+      : cleanedText
+
+    const awaitingExternalReview =
+      autoSubmitted && findSignals(postSubmitText, EXTERNAL_WAIT_SIGNALS).length > 0
+
     const finalManagerDecision = decideManagerAction(
       assessment.modules,
       {
         score: assessment.score,
         priority: assessment.priority,
-        humanActionRequired:
-          requiresHuman || paymentSignals.length > 0,
+        humanActionRequired: requiresHuman,
       },
     )
 
@@ -726,18 +885,28 @@ async function inspectOpportunity(
         }) ?? 'A fonte oficial exige uma intervenção humana antes da próxima etapa.'
       : undefined
 
-    execution = requiresHuman
-      ? transitionExecution(execution, 'waiting_human', {
-          intervention: {
-            required: true,
-            reason: sensitiveReason,
-            action: 'Abra a fonte oficial, revise a etapa indicada e execute ou autorize somente o que você decidir. O agente não clicou, não enviou dados e não confirmou pagamento.',
-            url: page.url(),
-          },
-        })
-      : transitionExecution(execution, 'completed', {
-          evidence: `Página oficial acessada e preparada sem autenticação, envio de dados ou confirmação financeira: ${pageTitle}`,
-        })
+    if (requiresHuman) {
+      execution = transitionExecution(execution, 'waiting_human', {
+        intervention: {
+          required: true,
+          reason: sensitiveReason ?? 'A fonte oficial exige uma intervenção humana antes da próxima etapa.',
+          action: 'Abra a fonte oficial, revise a etapa indicada e execute ou autorize somente o que você decidir. O agente não clicou, não enviou dados e não confirmou pagamento.',
+          url: page.url(),
+        },
+      })
+    } else if (autoSubmitted && awaitingExternalReview) {
+      execution = transitionExecution(execution, 'waiting_external', {
+        evidence: `Formulário preenchido e enviado automaticamente com os dados já autorizados. A plataforma agora está processando a etapa: ${pageTitle}`,
+      })
+    } else if (autoSubmitted) {
+      execution = transitionExecution(execution, 'completed', {
+        evidence: `Formulário preenchido e enviado automaticamente com os dados já autorizados: ${pageTitle}`,
+      })
+    } else {
+      execution = transitionExecution(execution, 'completed', {
+        evidence: `Página oficial acessada e preparada sem autenticação, envio de dados ou confirmação financeira: ${pageTitle}`,
+      })
+    }
 
     if (requiresHuman) {
       const notificationKind = financialConfirmationRequired
@@ -755,6 +924,17 @@ async function inspectOpportunity(
         ref: `opportunity:${opportunity.id}`,
         title: notificationTitle,
         body: notificationBody,
+        source: opportunity.source,
+        amount: Number(opportunity.estimated_value ?? 0),
+        url: opportunity.url ?? '/pendentes',
+        createdAt: new Date().toISOString(),
+      })
+    } else if (awaitingExternalReview) {
+      await upsertNotificationEvent({
+        kind: 'blocked_external',
+        ref: `opportunity-external:${opportunity.id}`,
+        title: '⏳ Aguardando processamento externo',
+        body: `Oportunidade: ${opportunity.title}. O agente já enviou a etapa disponível; agora depende exclusivamente do processamento da própria plataforma.`,
         source: opportunity.source,
         amount: Number(opportunity.estimated_value ?? 0),
         url: opportunity.url ?? '/pendentes',
@@ -779,7 +959,7 @@ async function inspectOpportunity(
 
     await sql`
       UPDATE opportunities
-      SET status = 'pending'
+      SET status = ${execution.state === 'completed' ? 'done' : 'pending'}
       WHERE id = ${opportunity.id}
     `
 
@@ -824,6 +1004,10 @@ async function inspectOpportunity(
         humanSignals,
 
         paymentSignals,
+
+        autoSubmitted,
+
+        awaitingExternalReview,
       },
 
       financial: {
