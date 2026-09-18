@@ -646,26 +646,6 @@ export function AgentProvider({
       [discover],
     )
 
-  const refreshWorkerCycleSummary =
-    useCallback(
-      () => {
-        const nextExecutionAt = new Date(Date.now() + 60 * 60_000).toISOString()
-
-        setWorkerCycle((previous) => ({
-          ...previous,
-          nextExecutionAt,
-          processedCount: opportunities.filter((opportunity) => opportunity.status === 'done').length + tasks.filter((task) => task.state === 'done').length,
-          executingCount: runningTasks.length,
-          waitingHumanCount: pendingTasks.filter((task) => task.requiresUserAction || task.pendingReason?.toLowerCase().includes('ação humana') || task.pendingReason?.toLowerCase().includes('cadastro')).length + opportunities.filter((opportunity) => opportunity.requiresUserAction || opportunity.requiresSignup).length,
-          completedCount: opportunities.filter((opportunity) => opportunity.status === 'done').length + tasks.filter((task) => task.state === 'done').length,
-          blockedCount: opportunities.filter((opportunity) => opportunity.managerBlocked).length,
-          failedCount: opportunities.filter((opportunity) => opportunity.status === 'pending' && opportunity.preparationStatus === 'failed').length + tasks.filter((task) => task.preparationStatus === 'failed').length,
-          confirmedEarnings: transactions.reduce((sum, transaction) => sum + transaction.amount, 0),
-        }))
-      },
-      [opportunities, pendingTasks, runningTasks, tasks, transactions],
-    )
-
   /*
    * ==========================================
    * CICLO DO RADAR
@@ -802,64 +782,6 @@ export function AgentProvider({
         )
       },
       [],
-    )
-
-  const autoQueueNextOpportunity =
-    useCallback(
-      () => {
-        if (
-          statusRef.current !==
-          'working'
-        ) {
-          return
-        }
-
-        const candidates =
-          opportunities
-            .filter(
-              (opportunity) =>
-                opportunity.status ===
-                  'new' ||
-                opportunity.status ===
-                  'queued',
-            )
-            .map(
-              (opportunity) => ({
-                id: opportunity.id,
-                status: opportunity.status,
-                managerScore:
-                  opportunity.managerScore ??
-                  evaluateManagerModules(
-                    opportunity,
-                  ).score,
-                confidence:
-                  opportunity.confidence,
-                estimatedValue:
-                  opportunity.estimatedValue,
-              }),
-            )
-
-        const nextOpportunity =
-          pickNextOpportunity(
-            candidates,
-            taskRunningRef.current,
-          )
-
-        if (
-          nextOpportunity &&
-          !taskRunningRef.current.has(
-            nextOpportunity.id,
-          )
-        ) {
-          startOpportunity(
-            nextOpportunity.id,
-          )
-        }
-      },
-      [
-        opportunities,
-        startOpportunity,
-      ],
     )
 
   /*
@@ -1355,6 +1277,73 @@ export function AgentProvider({
 
   /*
    * ==========================================
+   * FILA AUTOMÁTICA
+   * ==========================================
+   *
+   * Depende de startOpportunity, por isso
+   * é declarado logo após sua definição.
+   */
+
+  const autoQueueNextOpportunity =
+    useCallback(
+      () => {
+        if (
+          statusRef.current !==
+          'working'
+        ) {
+          return
+        }
+
+        const candidates =
+          opportunities
+            .filter(
+              (opportunity) =>
+                opportunity.status ===
+                  'new' ||
+                opportunity.status ===
+                  'queued',
+            )
+            .map(
+              (opportunity) => ({
+                id: opportunity.id,
+                status: opportunity.status,
+                managerScore:
+                  opportunity.managerScore ??
+                  evaluateManagerModules(
+                    opportunity,
+                  ).score,
+                confidence:
+                  opportunity.confidence,
+                estimatedValue:
+                  opportunity.estimatedValue,
+              }),
+            )
+
+        const nextOpportunity =
+          pickNextOpportunity(
+            candidates,
+            taskRunningRef.current,
+          )
+
+        if (
+          nextOpportunity &&
+          !taskRunningRef.current.has(
+            nextOpportunity.id,
+          )
+        ) {
+          startOpportunity(
+            nextOpportunity.id,
+          )
+        }
+      },
+      [
+        opportunities,
+        startOpportunity,
+      ],
+    )
+
+  /*
+   * ==========================================
    * RESOLVER PENDÊNCIA
    * ==========================================
    *
@@ -1564,6 +1553,40 @@ export function AgentProvider({
 
   /*
    * ==========================================
+   * TAREFAS EM EXECUÇÃO
+   * ==========================================
+   */
+
+  const runningTasks =
+    useMemo(
+      () =>
+        tasks.filter(
+          (task) =>
+            task.state ===
+            'running',
+        ),
+      [tasks],
+    )
+
+  /*
+   * ==========================================
+   * TAREFAS PENDENTES
+   * ==========================================
+   */
+
+  const pendingTasks =
+    useMemo(
+      () =>
+        tasks.filter(
+          (task) =>
+            task.state ===
+            'pending',
+        ),
+      [tasks],
+    )
+
+  /*
+   * ==========================================
    * PRIMEIRA EXECUÇÃO
    * ==========================================
    */
@@ -1642,36 +1665,31 @@ export function AgentProvider({
 
   /*
    * ==========================================
-   * TAREFAS EM EXECUÇÃO
+   * RESUMO DO CICLO DO WORKER
    * ==========================================
+   *
+   * Depende de runningTasks e pendingTasks,
+   * por isso é declarado logo após ambos.
    */
 
-  const runningTasks =
-    useMemo(
-      () =>
-        tasks.filter(
-          (task) =>
-            task.state ===
-            'running',
-        ),
-      [tasks],
-    )
+  const refreshWorkerCycleSummary =
+    useCallback(
+      () => {
+        const nextExecutionAt = new Date(Date.now() + 60 * 60_000).toISOString()
 
-  /*
-   * ==========================================
-   * TAREFAS PENDENTES
-   * ==========================================
-   */
-
-  const pendingTasks =
-    useMemo(
-      () =>
-        tasks.filter(
-          (task) =>
-            task.state ===
-            'pending',
-        ),
-      [tasks],
+        setWorkerCycle((previous) => ({
+          ...previous,
+          nextExecutionAt,
+          processedCount: opportunities.filter((opportunity) => opportunity.status === 'done').length + tasks.filter((task) => task.state === 'done').length,
+          executingCount: runningTasks.length,
+          waitingHumanCount: pendingTasks.filter((task) => task.requiresUserAction || task.pendingReason?.toLowerCase().includes('ação humana') || task.pendingReason?.toLowerCase().includes('cadastro')).length + opportunities.filter((opportunity) => opportunity.requiresUserAction || opportunity.requiresSignup).length,
+          completedCount: opportunities.filter((opportunity) => opportunity.status === 'done').length + tasks.filter((task) => task.state === 'done').length,
+          blockedCount: opportunities.filter((opportunity) => opportunity.managerBlocked).length,
+          failedCount: opportunities.filter((opportunity) => opportunity.status === 'pending' && opportunity.preparationStatus === 'failed').length + tasks.filter((task) => task.preparationStatus === 'failed').length,
+          confirmedEarnings: transactions.reduce((sum, transaction) => sum + transaction.amount, 0),
+        }))
+      },
+      [opportunities, pendingTasks, runningTasks, tasks, transactions],
     )
 
   /*
