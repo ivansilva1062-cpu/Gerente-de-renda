@@ -19,6 +19,7 @@ import {
   Trash2,
   Smartphone,
   Activity,
+  Landmark,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAgent } from '@/components/agent-provider'
@@ -30,6 +31,7 @@ const nav = [
   { href: '/oportunidades', label: 'Oportunidades', icon: Compass },
   { href: '/pendentes', label: 'Pendentes', icon: AlertCircle },
   { href: '/financeiro', label: 'Financeiro', icon: Wallet },
+  { href: '/pix', label: 'Pix', icon: Landmark },
   { href: '/historico', label: 'Histórico', icon: History },
   { href: '/diagnostico', label: 'Diagnóstico', icon: Activity },
   { href: '/seguranca', label: 'Segurança', icon: ShieldCheck },
