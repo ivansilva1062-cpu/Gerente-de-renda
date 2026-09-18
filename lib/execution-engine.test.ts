@@ -69,6 +69,34 @@ test('cria execução aprovada na fila e permite concluir uma ação segura', ()
   assert.match(completed.evidence ?? '', /Página oficial/)
 })
 
+test('encaminha Avaliador em REVISAR para pendência sem bloquear a oportunidade', () => {
+  const executionContext = context()
+  const modules = executionContext.modules.map((module) => (
+    module.module === 'avaliador'
+      ? {
+          ...module,
+          approved: false,
+          reason: 'Avaliação 66/100: revisar remuneração, ação, acessibilidade, esforço/retorno ou fonte antes de preparar.',
+          requiresHumanAction: false,
+          evaluation: { ...module.evaluation!, score: 66 },
+        }
+      : module
+  ))
+  const execution = createExecution({
+    ...executionContext,
+    modules,
+    decision: {
+      ...executionContext.decision,
+      decision: 'monitor',
+    },
+  })
+
+  assert.equal(execution.state, 'waiting_human')
+  assert.equal(execution.lifecycleState, 'ACTION_REQUIRED')
+  assert.equal(execution.intervention?.required, true)
+  assert.match(execution.intervention?.reason ?? '', /66\/100/)
+})
+
 test('interrompe exatamente antes de ação sensível e registra intervenção humana', () => {
   const execution = createExecution(context({
     ...approvedOpportunity,

@@ -137,18 +137,9 @@ export function createExecution(context: ExecutionContext): ExecutionRecord {
   const delivery = context.modules.find((module) => module.module === 'entrega')
   const reason = sensitiveActionReason(context.opportunity)
 
-  /*
-   * IMPORTANTE: só bloqueia de verdade quando um módulo realmente
-   * reprova a oportunidade (risco, avaliador ou entrega) ou quando
-   * algum módulo marca `blocked`. A decisão `decision.decision`
-   * pode ser 'monitor' apenas porque a prioridade/score ainda não
-   * é 'high' — isso NÃO é risco, é apenas priorização, e não pode
-   * travar permanentemente (estado 'blocked' não tem retry) uma
-   * oportunidade aprovada que o usuário/ciclo decidiu executar agora.
-   */
+  /* Bloqueios são terminais apenas quando sinalizados como tal pelo módulo. */
   if (
     context.modules.some((module) => module.blocked) ||
-    evaluator?.approved === false ||
     risk?.approved === false ||
     delivery?.approved === false
   ) {
@@ -179,6 +170,25 @@ export function createExecution(context: ExecutionContext): ExecutionRecord {
         required: true,
         reason,
         action: 'A pessoa responsável deve executar ou autorizar essa etapa na fonte oficial. O agente não enviará dados nem confirmará pagamento.',
+        url: context.opportunity.url,
+      },
+    }
+  }
+
+  if (evaluator?.approved === false) {
+    return {
+      id: context.id,
+      opportunity: context.opportunity,
+      state: 'waiting_human',
+      lifecycleState: 'ACTION_REQUIRED',
+      action: 'inspect',
+      createdAt: now,
+      updatedAt: now,
+      attempt,
+      intervention: {
+        required: true,
+        reason: evaluator.reason,
+        action: 'Revisar a evidência de remuneração, ação e acessibilidade antes de autorizar qualquer preparação. O agente não executará ações externas.',
         url: context.opportunity.url,
       },
     }

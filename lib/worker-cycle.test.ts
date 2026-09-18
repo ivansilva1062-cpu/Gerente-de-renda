@@ -52,6 +52,29 @@ test('processa waiting_human sem impedir a próxima oportunidade', async () => {
   assert.deepEqual(result.results.map((item) => item.state), ['waiting_human', 'completed'])
 })
 
+test('mantém Avaliador em REVISAR como pendência e processa as demais oportunidades', async () => {
+  const review = candidate('review', {
+    description: 'Paid task with a clear service request available in residents only.',
+    managerScore: 100,
+  })
+  const safe = candidate('safe')
+  const selected = selectWorkerCycleCandidates([review, safe])
+  const calls: string[] = []
+  const result = await runWorkerCycle(
+    [review, safe],
+    [],
+    async (item) => {
+      calls.push(item.id)
+      return { id: item.id, state: item.id === 'review' ? 'waiting_human' : 'completed' }
+    },
+    2,
+  )
+
+  assert.deepEqual(selected.map((item) => item.id), ['review', 'safe'])
+  assert.deepEqual(calls, ['review', 'safe'])
+  assert.deepEqual(result.results.map((item) => item.state), ['waiting_human', 'completed'])
+})
+
 test('isola falha de uma oportunidade e continua processando as demais', async () => {
   const result = await runWorkerCycle(
     [candidate('fails', { managerScore: 100 }), candidate('works')],
