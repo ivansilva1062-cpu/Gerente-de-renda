@@ -67,3 +67,37 @@ test('isola falha de uma oportunidade e continua processando as demais', async (
   assert.equal(result.results[0]?.error, 'falha controlada')
   assert.equal(result.results[1]?.state, 'completed')
 })
+
+test('processa candidatos em paralelo e limita a retentativa a uma tentativa extra', async () => {
+    const attempts = new Map<string, number>()
+    let active = 0
+    let maximumActive = 0
+
+    const result = await runWorkerCycle(
+      [
+        candidate('first', { managerScore: 90 }),
+        candidate('second', { managerScore: 80 }),
+      ],
+      [],
+      async (candidate) => {
+        active += 1
+        maximumActive = Math.max(maximumActive, active)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        active -= 1
+
+        const currentAttempt = (attempts.get(candidate.id) ?? 0) + 1
+        attempts.set(candidate.id, currentAttempt)
+        if (candidate.id === 'first' && currentAttempt === 1) {
+          throw new Error('falha transitória')
+        }
+
+        return { id: candidate.id, state: 'completed' as const }
+      },
+      2,
+    )
+
+    assert.equal(maximumActive, 2)
+    assert.equal(attempts.get('first'), 2)
+    assert.equal(attempts.get('second'), 1)
+    assert.deepEqual(result.results.map((item) => item.state), ['completed', 'completed'])
+})

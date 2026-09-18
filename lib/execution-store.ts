@@ -7,6 +7,7 @@ export async function persistExecution(execution: ExecutionRecord) {
       id TEXT PRIMARY KEY,
       opportunity_id TEXT,
       state TEXT NOT NULL,
+      lifecycle_state TEXT NOT NULL DEFAULT 'DISCOVERED',
       action TEXT NOT NULL,
       opportunity JSONB NOT NULL,
       intervention JSONB,
@@ -15,6 +16,11 @@ export async function persistExecution(execution: ExecutionRecord) {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `
+
+  await sql`
+    ALTER TABLE execution_runs
+    ADD COLUMN IF NOT EXISTS lifecycle_state TEXT NOT NULL DEFAULT 'DISCOVERED'
   `
 
   await sql`
@@ -32,13 +38,14 @@ export async function persistExecution(execution: ExecutionRecord) {
 
   await sql`
     INSERT INTO execution_runs (
-      id, opportunity_id, state, action, opportunity, intervention,
+      id, opportunity_id, state, lifecycle_state, action, opportunity, intervention,
       evidence, error, created_at, updated_at
     )
     VALUES (
       ${execution.id},
       ${execution.id.replace(/^execution-/, '')},
       ${execution.state},
+      ${execution.lifecycleState},
       ${execution.action},
       ${JSON.stringify(execution.opportunity)},
       ${execution.intervention ? JSON.stringify(execution.intervention) : null},
@@ -49,6 +56,7 @@ export async function persistExecution(execution: ExecutionRecord) {
     )
     ON CONFLICT (id) DO UPDATE SET
       state = EXCLUDED.state,
+      lifecycle_state = EXCLUDED.lifecycle_state,
       action = EXCLUDED.action,
       intervention = EXCLUDED.intervention,
       evidence = EXCLUDED.evidence,

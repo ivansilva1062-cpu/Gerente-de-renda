@@ -27,6 +27,11 @@ import { NextActionCard } from '@/components/next-action-card'
 export default function DashboardPage() {
   const { today, total, dailyGoal, opportunities, runningTasks, pendingTasks } = useAgent()
   const goalPct = Math.round((today / dailyGoal) * 100)
+  const completedTasks = opportunities.filter((opportunity) => opportunity.status === 'done').length
+  const processingTasks = pendingTasks.filter((task) => !task.requiresUserAction).length
+  const estimatedPotential = opportunities
+    .filter((opportunity) => opportunity.status !== 'done')
+    .reduce((sum, opportunity) => sum + Number(opportunity.estimatedValue ?? 0), 0)
   const openOpportunities = opportunities.filter(
     (o) => o.status === 'new' || o.status === 'queued',
   ).length
@@ -96,10 +101,10 @@ export default function DashboardPage() {
           hint={<span>Cron agendado</span>}
         />
         <StatCard
-          label="Processadas"
-          value={String(opportunities.filter((o) => o.status === 'done').length + runningTasks.length + pendingTasks.length)}
+          label="Em processamento"
+          value={String(processingTasks)}
           icon={ArrowRight}
-          hint={<span>Em fila e execução</span>}
+          hint={<span>Preparação sem ação humana</span>}
         />
         <StatCard
           label="Executando"
@@ -108,10 +113,23 @@ export default function DashboardPage() {
           hint={<span>em paralelo</span>}
         />
         <StatCard
-          label="Aguardando usuário"
+          label="Aguardando você"
           value={String(pendingTasks.filter((task) => task.requiresUserAction).length)}
           icon={AlertCircle}
           hint={<span>intervenção necessária</span>}
+        />
+        <StatCard
+          label="Concluídas"
+          value={String(completedTasks)}
+          icon={ArrowRight}
+          hint={<span>Sem confundir com pagamento</span>}
+        />
+        <StatCard
+          label="Potencial estimado"
+          value={usd(estimatedPotential)}
+          icon={Target}
+          accent="warning"
+          hint={<span>Não é dinheiro recebido</span>}
         />
         <StatCard
           label="Ganhos confirmados"

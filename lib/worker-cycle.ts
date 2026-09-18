@@ -45,19 +45,23 @@ export async function runWorkerCycle<T extends WorkerCycleCandidate>(
   limit = 3,
 ) {
   const selected = selectWorkerCycleCandidates(candidates, excludedIds, limit)
-  const results: WorkerCycleResult[] = []
+  const results = await Promise.all(selected.map(async (candidate) => {
+    let lastError: unknown
 
-  for (const candidate of selected) {
-    try {
-      results.push(await process(candidate))
-    } catch (error) {
-      results.push({
-        id: candidate.id,
-        state: 'failed',
-        error: error instanceof Error ? error.message : 'Falha isolada no Worker.',
-      })
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        return await process(candidate)
+      } catch (error) {
+        lastError = error
+      }
     }
-  }
+
+    return {
+      id: candidate.id,
+      state: 'failed' as const,
+      error: lastError instanceof Error ? lastError.message : 'Falha isolada no Worker.',
+    }
+  }))
 
   return {
     selectedIds: selected.map((candidate) => candidate.id),
