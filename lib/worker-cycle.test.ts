@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { runWorkerCycle, selectWorkerCycleCandidates } from './worker-cycle.ts'
+import { runWorkerCycle, selectWorkerCycleCandidates, shouldIncludeInCycle } from './worker-cycle.ts'
 
 const candidate = (id: string, overrides: Record<string, unknown> = {}) => ({
   id,
@@ -100,4 +100,93 @@ test('processa candidatos em paralelo e limita a retentativa a uma tentativa ext
     assert.equal(attempts.get('first'), 2)
     assert.equal(attempts.get('second'), 1)
     assert.deepEqual(result.results.map((item) => item.state), ['completed', 'completed'])
+})
+
+test('quando uma das 3 vagas termina rápido, o ciclo puxa imediatamente a próxima candidata elegível', async () => {
+  const durations: Record<string, number> = {
+    a: 5,
+    b: 40,
+    c: 40,
+    d: 5,
+    e: 5,
+  }
+
+  let active = 0
+  let maximumActive = 0
+  const startedOrder: string[] = []
+
+  const ids = ['a', 'b', 'c', 'd', 'e']
+  const result = await runWorkerCycle(
+    ids.map((id, index) => candidate(id, { managerScore: 100 - index })),
+    [],
+    async (item) => {
+      startedOrder.push(item.id)
+      active += 1
+      maximumActive = Math.max(maximumActive, active)
+      await new Promise((resolve) => setTimeout(resolve, durations[item.id]))
+      active -= 1
+      return { id: item.id, state: 'completed' as const }
+    },
+    3,
+  )
+
+  assert.equal(maximumActive, 3)
+  assert.equal(result.selectedIds.length, 5)
+  assert.equal(result.results.length, 5)
+  assert.deepEqual(new Set(result.results.map((item) => item.id)), new Set(['a', 'b', 'c', 'd', 'e']))
+  assert.ok(result.results.every((item) => item.state === 'completed'))
+  /*
+   * 'a' e 'd'/'e' terminam rápido enquanto 'b'/'c' ainda rodam;
+   * como só há 3 vagas, o ciclo já deve ter iniciado uma 4ª e
+   * 5ª oportunidade antes de 'b'/'c' terminarem.
+   */
+  assert.ok(startedOrder.length === 5)
+})
+
+test('waiting_external não bloqueia as demais oportunidades no mesmo ciclo', async () => {
+  const calls: string[] = []
+  const result = await runWorkerCycle(
+    [candidate('external', { managerScore: 100 }), candidate('safe-1'), candidate('safe-2')],
+    [],
+    async (item) => {
+      calls.push(item.id)
+      if (item.id === 'external') {
+        return { id: item.id, state: 'waiting_external' as const }
+      }
+      return { id: item.id, state: 'completed' as const }
+    },
+    3,
+  )
+
+  assert.deepEqual(new Set(calls), new Set(['external', 'safe-1', 'safe-2']))
+  assert.deepEqual(
+    result.results.find((item) => item.id === 'external')?.state,
+    'waiting_external',
+  )
+  assert.ok(result.results.filter((item) => item.state === 'completed').length === 2)
+})
+
+test('sem candidatos elegíveis, o ciclo fica corretamente sem nenhuma tarefa executável', async () => {
+  const result = await runWorkerCycle(
+    [candidate('blocked-only', {
+      description: 'Pay to apply with an upfront fee and connect your wallet.',
+    })],
+    [],
+    async (item) => ({ id: item.id, state: 'completed' as const }),
+    3,
+  )
+
+  assert.deepEqual(result.selectedIds, [])
+  assert.deepEqual(result.results, [])
+})
+
+test('reprocessa pendentes apenas quando a última execução foi retryável, sem reciclar waiting_human ou waiting_external', () => {
+  assert.equal(shouldIncludeInCycle('pending', 'failed'), true)
+  assert.equal(shouldIncludeInCycle('pending', 'blocked'), true)
+  assert.equal(shouldIncludeInCycle('pending', 'waiting_external'), true)
+  assert.equal(shouldIncludeInCycle('pending', 'queued'), false)
+  assert.equal(shouldIncludeInCycle('pending', 'waiting_human'), false)
+  assert.equal(shouldIncludeInCycle('pending', 'completed'), false)
+  assert.equal(shouldIncludeInCycle('new', undefined), true)
+  assert.equal(shouldIncludeInCycle('queued', undefined), true)
 })

@@ -15,7 +15,7 @@ import {
 import { persistExecution } from '@/lib/execution-store'
 import { requestHasActiveSession } from '@/lib/auth-server'
 import { isAuthorizedWorkerRequest } from '@/lib/worker-auth'
-import { runWorkerCycle } from '@/lib/worker-cycle'
+import { runWorkerCycle, shouldIncludeInCycle } from '@/lib/worker-cycle'
 import { upsertNotificationEvent } from '@/lib/notifications'
 import { getOperatorProfile } from '@/lib/operator-profile'
 import { getStoredOperatorProfile } from '@/lib/profile-store'
@@ -242,21 +242,21 @@ async function ensureManagerColumns() {
  * ==========================================
  * SINAIS DE AÇÃO HUMANA
  * ==========================================
+ *
+ * Só entram aqui etapas que o agente NUNCA pode
+ * concluir sozinho, independente dos campos da
+ * página (identidade/documento real, verificação
+ * de e-mail que só o dono da caixa pode confirmar).
+ * Login/cadastro NÃO estão aqui: a classificação
+ * real depende dos campos encontrados na página
+ * (ver hasSensitiveFormFields), não da palavra.
  */
 
 const HUMAN_ACTION_SIGNALS = [
-  'sign in',
-  'log in',
-  'login',
-  'sign up',
-  'signup',
-  'register',
-  'create account',
-  'create an account',
   'verify your identity',
   'identity verification',
-  'verify your email',
   'upload your id',
+  'verify your email',
 ]
 
 /*
@@ -268,7 +268,8 @@ const HUMAN_ACTION_SIGNALS = [
  * que o próprio agente pode preencher e enviar
  * usando os dados já autorizados pelo operador,
  * desde que não existam campos sensíveis nem
- * CAPTCHA na página.
+ * CAPTCHA na página (checagem real, não só a
+ * palavra "cadastro"/"sign up"/"login" no texto).
  */
 
 const SOFT_ACTION_SIGNALS = [
@@ -281,6 +282,16 @@ const SOFT_ACTION_SIGNALS = [
   'participate in the study',
   'accept the task',
   'claim task',
+  'sign in',
+  'log in',
+  'login',
+  'sign up',
+  'signup',
+  'register',
+  'create account',
+  'create an account',
+  'cadastro',
+  'cadastre-se',
 ]
 
 /*
@@ -458,33 +469,32 @@ async function runDiscovery(
 
 async function getCycleCandidates() {
   /*
-   * Uma oportunidade "pending" cuja última execução falhou
-   * (Browserbase indisponível, timeout, erro pontual) volta
-   * automaticamente para a fila de monitoramento/retry.
-   * Isso NÃO inclui waiting_human, waiting_external, blocked
-   * ou completed — essas continuam fora do ciclo automático.
+   * O ciclo reprocessa apenas candidatos realmente executáveis:
+   * - novas/queued prontas para entrar;
+   * - pending com última execução retryável (falha, bloqueio ou espera externa);
+   * - nunca waiting_human/completed em loop de execução automática.
    */
   const rows = await sql`
     SELECT o.id, o.title, o.source, o.category, o.description, o.action_required,
-      o.estimated_value, o.confidence, o.status, o.url, o.requires_signup, o.requires_user_action
+      o.estimated_value, o.confidence, o.status, o.url, o.requires_signup, o.requires_user_action,
+      le.state AS last_execution_state
     FROM opportunities o
+    LEFT JOIN LATERAL (
+      SELECT state
+      FROM execution_runs er
+      WHERE er.opportunity_id = o.id
+      ORDER BY er.updated_at DESC
+      LIMIT 1
+    ) le ON TRUE
     WHERE o.title IS NOT NULL
       AND o.url IS NOT NULL
-      AND (
-        o.status IN ('new', 'queued')
-        OR (
-          o.status = 'pending'
-          AND EXISTS (
-            SELECT 1 FROM execution_runs er
-            WHERE er.id = 'execution-' || o.id
-              AND er.state = 'failed'
-          )
-        )
-      )
     ORDER BY o.manager_blocked ASC, o.manager_score DESC, o.confidence DESC, o.estimated_value DESC, o.created_at DESC NULLS LAST
-    LIMIT 12
+    LIMIT 60
   `
-  return rows as OpportunityRow[]
+
+  const rowsWithState = rows as Array<OpportunityRow & { last_execution_state?: string | null }>
+
+  return rowsWithState.filter((row) => shouldIncludeInCycle(row.status, row.last_execution_state)) as OpportunityRow[]
 }
 
 async function getExcludedExecutionIds() {
@@ -511,7 +521,7 @@ async function runContinuousCycle() {
     description: row.description ?? '',
     estimatedValue: Number(row.estimated_value ?? 0),
     confidence: Number(row.confidence ?? 0),
-    actionRequired: row.action_required ?? (row.requires_signup ? 'Cadastro necessário' : undefined),
+    actionRequired: row.action_required ?? undefined,
     managerScore: 0,
   }))
 
@@ -596,7 +606,7 @@ async function inspectOpportunity(
     title: opportunity.title,
     url: opportunity.url ?? '',
     description: opportunity.description ?? `${opportunity.source} ${opportunity.category}`,
-    actionRequired: opportunity.action_required ?? (opportunity.requires_signup ? 'Cadastro necessário' : undefined),
+    actionRequired: opportunity.action_required ?? undefined,
     estimatedValue: Number(opportunity.estimated_value ?? 0),
     confidence: Number(opportunity.confidence ?? 0),
     category: opportunity.category,
@@ -868,11 +878,17 @@ async function inspectOpportunity(
      * - não envia formulário com senha, cartão, Pix ou identidade;
      * - não contorna CAPTCHA;
      * - não confirma pagamento.
+     *
+     * IMPORTANTE: requires_signup/requires_user_action são apenas
+     * sinais informativos do Radar (baseados em palavras do
+     * título/descrição no momento da descoberta). A classificação
+     * REAL usa o conteúdo e os campos encontrados na página ao
+     * vivo (humanSignals, financialConfirmationRequired,
+     * captchaDetected) — nunca a palavra isolada "cadastro"/"apply"
+     * capturada antes de a página ser visitada.
      */
 
     const requiresHuman =
-      opportunity.requires_user_action ||
-      opportunity.requires_signup ||
       humanSignals.length > 0 ||
       financialConfirmationRequired ||
       captchaDetected ||

@@ -9,15 +9,34 @@ export type WorkerCycleResult = {
   error?: string
 }
 
-export function selectWorkerCycleCandidates(
-  candidates: WorkerCycleCandidate[],
+export function shouldIncludeInCycle(
+  status: string | null | undefined,
+  lastExecutionState?: string | null,
+) {
+  if (status === 'new' || status === 'queued') {
+    return true
+  }
+
+  if (status !== 'pending') {
+    return false
+  }
+
+  if (!lastExecutionState) {
+    return false
+  }
+
+  return ['failed', 'blocked', 'waiting_external'].includes(lastExecutionState)
+}
+
+export function selectWorkerCycleCandidates<T extends WorkerCycleCandidate>(
+  candidates: T[],
   excludedIds: Iterable<string> = [],
-  limit = 3,
+  maxTotal = 12,
 ) {
   const excluded = new Set(excludedIds)
-  const selected: WorkerCycleCandidate[] = []
+  const selected: T[] = []
 
-  while (selected.length < limit) {
+  while (selected.length < maxTotal) {
     const next = pickNextOpportunity(candidates, [
       ...excluded,
       ...selected.map((candidate) => candidate.id),
@@ -38,14 +57,38 @@ export function selectWorkerCycleCandidates(
   return selected
 }
 
+/*
+ * ==========================================
+ * CICLO DO WORKER
+ * ==========================================
+ *
+ * O ciclo NÃO seleciona um lote fixo e espera
+ * todo mundo terminar. Ele mantém um pool de
+ * `concurrency` vagas ativas: assim que uma
+ * oportunidade termina (concluída, waiting_human,
+ * waiting_external ou falha), a vaga libera e a
+ * próxima candidata elegível da fila é iniciada
+ * imediatamente, dentro do mesmo ciclo — até
+ * esgotar os candidatos elegíveis (até `maxTotal`).
+ *
+ * Uma oportunidade travada em waiting_human ou
+ * waiting_external ocupa só a própria vaga: ela
+ * conta como "terminada" para efeito de concorrência
+ * assim que o processamento devolve o resultado —
+ * ela nunca impede as demais de avançar.
+ */
 export async function runWorkerCycle<T extends WorkerCycleCandidate>(
   candidates: T[],
   excludedIds: Iterable<string>,
   process: (candidate: T) => Promise<WorkerCycleResult>,
-  limit = 3,
+  concurrency = 3,
+  maxTotal = 12,
 ) {
-  const selected = selectWorkerCycleCandidates(candidates, excludedIds, limit)
-  const results = await Promise.all(selected.map(async (candidate) => {
+  const selected = selectWorkerCycleCandidates(candidates, excludedIds, maxTotal)
+  const results: WorkerCycleResult[] = new Array(selected.length)
+  let cursor = 0
+
+  async function runOne(candidate: T) {
     let lastError: unknown
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -61,7 +104,19 @@ export async function runWorkerCycle<T extends WorkerCycleCandidate>(
       state: 'failed' as const,
       error: lastError instanceof Error ? lastError.message : 'Falha isolada no Worker.',
     }
-  }))
+  }
+
+  async function worker() {
+    while (true) {
+      const index = cursor
+      cursor += 1
+      if (index >= selected.length) return
+      results[index] = await runOne(selected[index])
+    }
+  }
+
+  const poolSize = Math.max(1, Math.min(concurrency, selected.length))
+  await Promise.all(Array.from({ length: poolSize }, () => worker()))
 
   return {
     selectedIds: selected.map((candidate) => candidate.id),
