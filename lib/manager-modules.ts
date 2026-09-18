@@ -185,7 +185,7 @@ export function avaliador(input: OpportunityInput): ModuleResult {
       ? 'indicative'
       : 'missing'
   const action = hasConcreteAction
-    ? /captcha|identity|identidade|cadastro|login|senha|documento|autenticação|verification|verificação/.test(text)
+    ? /captcha|identity|identidade|documento|senha|password|cart[aã]o|card|pix|cpf|cnpj|kyc|saque|withdraw|autentica[cç][aã]o|verification|verifica[cç][aã]o/.test(text)
       ? 'human_required'
       : 'clear'
     : 'unclear'
@@ -260,7 +260,7 @@ export function risco(input: OpportunityInput): ModuleResult {
   const text = `${input.title} ${input.description ?? ''}`.toLowerCase()
   const suspicious = hasSensitiveFlow(text)
   const informationalContent = isInformationalContent(input)
-  const needsHumanAction = /captcha|verificação|identity|identidade|cadastro|login|senha|documento|autenticação|kYC/.test(text)
+  const needsHumanAction = /captcha|verifica[cç][aã]o|identity|identidade|documento|senha|password|cart[aã]o|card|pix|cpf|cnpj|kyc|saque|withdraw|autentica[cç][aã]o/.test(text)
 
   return {
     module: 'risco',
@@ -333,7 +333,7 @@ export function vendedor(input: OpportunityInput): ModuleResult {
 }
 
 export function entrega(input: OpportunityInput): ModuleResult {
-  const needsHumanAction = /senha|login|documento|identidade|autenticação|cadastro|cartão|pix|pagamento/.test(
+  const needsHumanAction = /senha|password|documento|identidade|autentica[cç][aã]o|cart[aã]o|card|pix|cpf|cnpj|kyc|saque|withdraw|captcha/.test(
     `${input.title} ${input.description ?? ''}`.toLowerCase(),
   )
 

@@ -50,7 +50,7 @@ export type ExecutionContext = {
   now?: string
 }
 
-const SENSITIVE_ACTION = /login|log in|sign in|senha|password|credential|credencial|cadastro|register|sign up|signup|identity|identidade|kyc|documento|document|cpf|cnpj|cart[aã]o|card|pagamento|payment|pay to|pix|saque|withdraw|wallet|carteira|captcha|autentica[cç][aã]o|verification|verifica[cç][aã]o|apply now|submit application|complete your profile|take the test|complete the test|complete the survey|participate in the study|accept the task|claim task|payout/i
+const SENSITIVE_ACTION = /senha|password|credential|credencial|identity|identidade|kyc|documento|document|cpf|cnpj|cart[aã]o|card|pix|saque|withdraw|wallet|carteira|captcha|autentica[cç][aã]o|verification|verifica[cç][aã]o/i
 
 export function isSensitiveAction(value: string) {
   return SENSITIVE_ACTION.test(value)
@@ -60,7 +60,7 @@ export function sensitiveActionReason(opportunity: Pick<OpportunityInput, 'title
   const text = `${opportunity.title} ${opportunity.description ?? ''} ${opportunity.actionRequired ?? ''}`
 
   if (isSensitiveAction(text)) {
-    return 'A próxima etapa exige login, cadastro, identidade, credencial, documento, pagamento ou outra ação sensível.'
+    return 'A próxima etapa exige identidade, credencial, documento, cartão, Pix, CAPTCHA ou outra ação sensível que não pode ser automatizada.'
   }
 
   return null
@@ -96,8 +96,16 @@ export function createExecution(context: ExecutionContext): ExecutionRecord {
   const delivery = context.modules.find((module) => module.module === 'entrega')
   const reason = sensitiveActionReason(context.opportunity)
 
+  /*
+   * IMPORTANTE: só bloqueia de verdade quando um módulo realmente
+   * reprova a oportunidade (risco, avaliador ou entrega) ou quando
+   * algum módulo marca `blocked`. A decisão `decision.decision`
+   * pode ser 'monitor' apenas porque a prioridade/score ainda não
+   * é 'high' — isso NÃO é risco, é apenas priorização, e não pode
+   * travar permanentemente (estado 'blocked' não tem retry) uma
+   * oportunidade aprovada que o usuário/ciclo decidiu executar agora.
+   */
   if (
-    context.decision.decision !== 'prepare' ||
     context.modules.some((module) => module.blocked) ||
     evaluator?.approved === false ||
     risk?.approved === false ||

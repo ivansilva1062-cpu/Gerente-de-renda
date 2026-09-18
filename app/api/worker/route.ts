@@ -499,10 +499,17 @@ async function getCycleCandidates() {
 
 async function getExcludedExecutionIds() {
   try {
+    /*
+     * Exclui apenas quem está em andamento, precisa do usuário ou já
+     * terminou de verdade. 'blocked'/'waiting_external'/'failed' NÃO
+     * entram aqui: são justamente os estados retryáveis selecionados
+     * por getCycleCandidates/shouldIncludeInCycle — excluí-los aqui
+     * cancelava a retentativa que aquela função tentava permitir.
+     */
     const rows = await sql`
       SELECT opportunity_id
       FROM execution_runs
-      WHERE state IN ('queued', 'running', 'waiting_human', 'waiting_external', 'completed', 'blocked')
+      WHERE state IN ('queued', 'running', 'waiting_human', 'completed')
         AND opportunity_id IS NOT NULL
     `
     return rows.map((row) => String(row.opportunity_id))

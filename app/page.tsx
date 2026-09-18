@@ -28,7 +28,12 @@ export default function DashboardPage() {
   const { today, total, dailyGoal, opportunities, runningTasks, pendingTasks } = useAgent()
   const goalPct = Math.round((today / dailyGoal) * 100)
   const completedTasks = opportunities.filter((opportunity) => opportunity.status === 'done').length
-  const processingTasks = pendingTasks.filter((task) => !task.requiresUserAction).length
+  const waitingExternalTasks = pendingTasks.filter(
+    (task) => !task.requiresUserAction && task.preparationStatus === 'ready',
+  ).length
+  const failedTasks = pendingTasks.filter(
+    (task) => !task.requiresUserAction && task.preparationStatus === 'failed',
+  ).length
   const estimatedPotential = opportunities
     .filter((opportunity) => opportunity.status !== 'done')
     .reduce((sum, opportunity) => sum + Number(opportunity.estimatedValue ?? 0), 0)
@@ -101,22 +106,34 @@ export default function DashboardPage() {
           hint={<span>Cron agendado</span>}
         />
         <StatCard
-          label="Em processamento"
-          value={String(processingTasks)}
+          label="Na fila"
+          value={String(openOpportunities)}
           icon={ArrowRight}
-          hint={<span>Preparação sem ação humana</span>}
+          hint={<span>Aguardando o Worker iniciar</span>}
         />
         <StatCard
           label="Executando"
           value={String(runningTasks.length)}
           icon={Compass}
-          hint={<span>em paralelo</span>}
+          hint={<span>em paralelo agora</span>}
         />
         <StatCard
           label="Aguardando você"
           value={String(pendingTasks.filter((task) => task.requiresUserAction).length)}
           icon={AlertCircle}
           hint={<span>intervenção necessária</span>}
+        />
+        <StatCard
+          label="Aguardando plataforma"
+          value={String(waitingExternalTasks)}
+          icon={ArrowRight}
+          hint={<span>já enviado, sem ação sua</span>}
+        />
+        <StatCard
+          label="Falhas (retry automático)"
+          value={String(failedTasks)}
+          icon={AlertCircle}
+          hint={<span>o Worker tenta de novo sozinho</span>}
         />
         <StatCard
           label="Concluídas"
