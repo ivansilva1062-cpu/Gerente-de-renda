@@ -18,6 +18,7 @@ import {
   CheckCheck,
   Trash2,
   Smartphone,
+  Activity,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAgent } from '@/components/agent-provider'
@@ -30,6 +31,7 @@ const nav = [
   { href: '/pendentes', label: 'Pendentes', icon: AlertCircle },
   { href: '/financeiro', label: 'Financeiro', icon: Wallet },
   { href: '/historico', label: 'Histórico', icon: History },
+  { href: '/diagnostico', label: 'Diagnóstico', icon: Activity },
   { href: '/seguranca', label: 'Segurança', icon: ShieldCheck },
   { href: '/configuracoes', label: 'Configurações', icon: Settings },
 ]

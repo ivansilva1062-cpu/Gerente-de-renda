@@ -7,12 +7,13 @@ import { executionNextStep, planManagerExecution } from '@/lib/manager-execution
 import { decideManagerAction } from '@/lib/manager-decision'
 import {
   classifyExecutionState,
-  createExecution,
   isSensitiveAction,
+  scheduleRetry,
   sensitiveActionReason,
   transitionExecution,
 } from '@/lib/execution-engine'
-import { persistExecution } from '@/lib/execution-store'
+import { classifyExecutionAction } from '@/lib/execution-adapters'
+import { getExecutionRetryState, persistExecution } from '@/lib/execution-store'
 import { requestHasActiveSession } from '@/lib/auth-server'
 import { isAuthorizedWorkerRequest } from '@/lib/worker-auth'
 import { runWorkerCycle, shouldIncludeInCycle } from '@/lib/worker-cycle'
@@ -235,6 +236,11 @@ async function ensureManagerColumns() {
     ALTER TABLE opportunities
     ADD COLUMN IF NOT EXISTS manager_blocked BOOLEAN
     NOT NULL DEFAULT FALSE
+  `
+
+  await sql`
+    ALTER TABLE opportunities
+    ADD COLUMN IF NOT EXISTS worker_claimed_at TIMESTAMPTZ
   `
 }
 
@@ -472,15 +478,16 @@ async function getCycleCandidates() {
    * O ciclo reprocessa apenas candidatos realmente executáveis:
    * - novas/queued prontas para entrar;
    * - pending com última execução retryável (falha, bloqueio ou espera externa);
-   * - nunca waiting_human/completed em loop de execução automática.
+   * - nunca waiting_human/completed em loop de execução automática;
+   * - nunca antes do horário de backoff (next_attempt_at) da última falha.
    */
   const rows = await sql`
     SELECT o.id, o.title, o.source, o.category, o.description, o.action_required,
       o.estimated_value, o.confidence, o.status, o.url, o.requires_signup, o.requires_user_action,
-      le.state AS last_execution_state
+      le.state AS last_execution_state, le.next_attempt_at
     FROM opportunities o
     LEFT JOIN LATERAL (
-      SELECT state
+      SELECT state, next_attempt_at
       FROM execution_runs er
       WHERE er.opportunity_id = o.id
       ORDER BY er.updated_at DESC
@@ -488,6 +495,14 @@ async function getCycleCandidates() {
     ) le ON TRUE
     WHERE o.title IS NOT NULL
       AND o.url IS NOT NULL
+      AND (
+        o.status IN ('new', 'queued', 'pending')
+        OR (
+          o.status = 'running'
+          AND o.worker_claimed_at < NOW() - INTERVAL '15 minutes'
+        )
+      )
+      AND (le.next_attempt_at IS NULL OR le.next_attempt_at <= NOW())
     ORDER BY o.manager_blocked ASC, o.manager_score DESC, o.confidence DESC, o.estimated_value DESC, o.created_at DESC NULLS LAST
     LIMIT 60
   `
@@ -507,10 +522,18 @@ async function getExcludedExecutionIds() {
      * cancelava a retentativa que aquela função tentava permitir.
      */
     const rows = await sql`
-      SELECT opportunity_id
-      FROM execution_runs
-      WHERE state IN ('queued', 'running', 'waiting_human', 'completed')
-        AND opportunity_id IS NOT NULL
+      SELECT er.opportunity_id
+      FROM execution_runs er
+      JOIN opportunities o ON o.id = er.opportunity_id
+      WHERE er.state IN ('queued', 'running', 'waiting_human', 'completed')
+        AND er.opportunity_id IS NOT NULL
+        AND (
+          er.state IN ('waiting_human', 'completed')
+          OR (
+            o.status = 'running'
+            AND o.worker_claimed_at >= NOW() - INTERVAL '15 minutes'
+          )
+        )
     `
     return rows.map((row) => String(row.opportunity_id))
   } catch {
@@ -518,8 +541,35 @@ async function getExcludedExecutionIds() {
   }
 }
 
+async function claimOpportunity(opportunityId: string) {
+  const rows = await sql`
+    UPDATE opportunities
+    SET status = 'running', worker_claimed_at = NOW()
+    WHERE id = ${opportunityId}
+      AND (
+        status IN ('new', 'queued', 'pending')
+        OR (
+          status = 'running'
+          AND worker_claimed_at < NOW() - INTERVAL '15 minutes'
+        )
+      )
+    RETURNING id
+  `
+
+  return rows.length > 0
+}
+
 async function runContinuousCycle() {
   await ensureManagerColumns()
+
+  // Um processo interrompido não pode deixar uma reserva permanente.
+  await sql`
+    UPDATE opportunities
+    SET status = 'pending', worker_claimed_at = NULL
+    WHERE status = 'running'
+      AND worker_claimed_at < NOW() - INTERVAL '15 minutes'
+  `
+
   const rows = await getCycleCandidates()
   const excludedIds = await getExcludedExecutionIds()
   const candidates = rows.map((row) => ({
@@ -553,6 +603,14 @@ async function runContinuousCycle() {
     eligibleCandidates,
     excludedIds,
     async (candidate) => {
+      if (!(await claimOpportunity(candidate.id))) {
+        return {
+          id: candidate.id,
+          state: 'failed',
+          error: 'A oportunidade já está sendo processada por outro ciclo do Worker.',
+        }
+      }
+
       const result = await inspectOpportunity(candidate)
       return {
         id: candidate.id,
@@ -619,9 +677,16 @@ async function inspectOpportunity(
     category: opportunity.category,
     source: opportunity.source,
   }
-  const plan = planManagerExecution({ ...executionOpportunity, id: opportunity.id })
+  const retryState = await getExecutionRetryState(opportunity.id)
+  const plan = planManagerExecution({ ...executionOpportunity, id: opportunity.id }, Math.max(1, retryState.attempt))
   const { assessment, decision: managerDecision } = plan
-  let execution = plan.execution
+  const { actionType } = classifyExecutionAction({
+    category: opportunity.category,
+    title: opportunity.title,
+    description: executionOpportunity.description,
+    url: opportunity.url ?? undefined,
+  })
+  let execution = { ...plan.execution, actionType }
 
   await persistExecution(execution)
 
@@ -630,6 +695,7 @@ async function inspectOpportunity(
       UPDATE opportunities
       SET
         status = 'pending',
+        worker_claimed_at = NULL,
         manager_score = ${assessment.score},
         manager_priority = ${assessment.priority},
         manager_blocked = ${execution.state === 'blocked'}
@@ -661,11 +727,13 @@ async function inspectOpportunity(
     execution = transitionExecution(execution, 'failed', {
       error: 'A oportunidade não possui uma URL válida.',
     })
+    execution = scheduleRetry(execution)
     await persistExecution(execution)
 
     await sql`
       UPDATE opportunities
       SET status = 'pending'
+        , worker_claimed_at = NULL
       WHERE id = ${opportunity.id}
     `
 
@@ -694,11 +762,13 @@ async function inspectOpportunity(
     execution = transitionExecution(execution, 'failed', {
       error: 'BROWSERBASE_API_KEY não configurada; nenhuma ação externa foi executada.',
     })
+    execution = scheduleRetry(execution)
     await persistExecution(execution)
 
     await sql`
       UPDATE opportunities
       SET status = 'pending'
+        , worker_claimed_at = NULL
       WHERE id = ${opportunity.id}
     `
 
@@ -1018,6 +1088,7 @@ async function inspectOpportunity(
     await sql`
       UPDATE opportunities
       SET status = ${execution.state === 'completed' ? 'done' : 'pending'}
+        , worker_claimed_at = NULL
       WHERE id = ${opportunity.id}
     `
 
@@ -1098,6 +1169,11 @@ async function inspectOpportunity(
     execution = transitionExecution(execution, 'failed', {
       error: detail,
     })
+    /*
+     * Agenda a próxima tentativa com backoff exponencial em vez de
+     * deixar a falha travada ou retentar imediatamente a cada ciclo.
+     */
+    execution = scheduleRetry(execution)
     await persistExecution(execution)
 
     await upsertNotificationEvent({
@@ -1114,6 +1190,7 @@ async function inspectOpportunity(
     await sql`
       UPDATE opportunities
       SET status = 'pending'
+        , worker_claimed_at = NULL
       WHERE id = ${opportunity.id}
     `
 

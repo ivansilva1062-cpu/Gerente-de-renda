@@ -40,6 +40,22 @@ export type ExecutionRecord = {
   intervention?: HumanIntervention
   error?: string
   evidence?: string
+  /*
+   * Tentativa atual (1 na primeira execução). Persistido no banco
+   * para permitir retry com backoff entre ciclos do Worker.
+   */
+  attempt: number
+  /*
+   * Quando definido, o candidato só volta a ser elegível para o
+   * ciclo do Worker depois deste horário (backoff de falhas).
+   */
+  nextAttemptAt?: string
+  /*
+   * Tipo de ação real identificado pelo execution adapter do canal
+   * (ver lib/execution-adapters.ts). Não substitui `action`, que é
+   * o estágio genérico (inspect/prepare) do Execution Engine.
+   */
+  actionType?: string
 }
 
 export type ExecutionContext = {
@@ -48,6 +64,12 @@ export type ExecutionContext = {
   decision: ManagerDecisionResult
   modules: ModuleResult[]
   now?: string
+  /*
+   * Número da tentativa atual. Quem chama `createExecution` é
+   * responsável por consultar a tentativa anterior no banco
+   * (ver lib/execution-store.ts) e incrementar ao reprocessar.
+   */
+  attempt?: number
 }
 
 const SENSITIVE_ACTION = /senha|password|credential|credencial|identity|identidade|kyc|documento|document|cpf|cnpj|cart[aã]o|card|pix|saque|withdraw|wallet|carteira|captcha|autentica[cç][aã]o|verification|verifica[cç][aã]o/i
@@ -68,6 +90,24 @@ export function sensitiveActionReason(opportunity: Pick<OpportunityInput, 'title
 
 function timestamp(now?: string) {
   return now ?? new Date().toISOString()
+}
+
+/*
+ * ==========================================
+ * BACKOFF DE RETENTATIVAS
+ * ==========================================
+ *
+ * Backoff exponencial com teto, para que falhas transitórias não
+ * fiquem retentando a cada ciclo nem fiquem paradas para sempre.
+ * attempt 1 -> 1min, 2 -> 2min, 3 -> 4min ... teto de 30min.
+ */
+const BASE_BACKOFF_MS = 60_000
+const MAX_BACKOFF_MS = 30 * 60_000
+
+export function computeBackoffMs(attempt: number) {
+  const safeAttempt = Math.max(1, Math.floor(attempt))
+  const backoff = BASE_BACKOFF_MS * 2 ** (safeAttempt - 1)
+  return Math.min(backoff, MAX_BACKOFF_MS)
 }
 
 function lifecycleForState(state: ExecutionState): ExecutionLifecycleState {
@@ -91,6 +131,7 @@ function lifecycleForState(state: ExecutionState): ExecutionLifecycleState {
 
 export function createExecution(context: ExecutionContext): ExecutionRecord {
   const now = timestamp(context.now)
+  const attempt = Math.max(1, Math.floor(context.attempt ?? 1))
   const evaluator = context.modules.find((module) => module.module === 'avaliador')
   const risk = context.modules.find((module) => module.module === 'risco')
   const delivery = context.modules.find((module) => module.module === 'entrega')
@@ -119,6 +160,7 @@ export function createExecution(context: ExecutionContext): ExecutionRecord {
       action: 'inspect',
       createdAt: now,
       updatedAt: now,
+      attempt,
       error: 'A oportunidade não foi aprovada por todos os módulos necessários do Gerente.',
     }
   }
@@ -132,6 +174,7 @@ export function createExecution(context: ExecutionContext): ExecutionRecord {
       action: 'prepare',
       createdAt: now,
       updatedAt: now,
+      attempt,
       intervention: {
         required: true,
         reason,
@@ -149,6 +192,7 @@ export function createExecution(context: ExecutionContext): ExecutionRecord {
     action: 'prepare',
     createdAt: now,
     updatedAt: now,
+    attempt,
   }
 }
 
@@ -165,7 +209,7 @@ const transitions: Record<ExecutionState, ExecutionState[]> = {
 export function transitionExecution(
   execution: ExecutionRecord,
   nextState: ExecutionState,
-  details: Pick<ExecutionRecord, 'intervention' | 'error' | 'evidence'> = {},
+  details: Partial<Pick<ExecutionRecord, 'intervention' | 'error' | 'evidence' | 'attempt' | 'nextAttemptAt' | 'actionType'>> = {},
   now?: string,
 ): ExecutionRecord {
   if (!transitions[execution.state].includes(nextState)) {
@@ -178,6 +222,22 @@ export function transitionExecution(
     state: nextState,
     lifecycleState: lifecycleForState(nextState),
     updatedAt: timestamp(now),
+  }
+}
+
+/*
+ * Marca a próxima tentativa (backoff) de uma execução que falhou,
+ * sem alterar o estado — quem seleciona candidatos do ciclo do
+ * Worker deve respeitar `nextAttemptAt` antes de reprocessar.
+ */
+export function scheduleRetry(execution: ExecutionRecord, now?: string): ExecutionRecord {
+  const nextAttempt = execution.attempt + 1
+  const delay = computeBackoffMs(nextAttempt)
+  const base = timestamp(now)
+  return {
+    ...execution,
+    attempt: nextAttempt,
+    nextAttemptAt: new Date(new Date(base).getTime() + delay).toISOString(),
   }
 }
 

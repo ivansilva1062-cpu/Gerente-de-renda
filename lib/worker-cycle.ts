@@ -18,14 +18,14 @@ export function shouldIncludeInCycle(
   }
 
   if (status !== 'pending') {
-    return false
+    return status === 'running' && (!lastExecutionState || ['failed', 'blocked', 'waiting_external'].includes(lastExecutionState))
   }
 
   if (!lastExecutionState) {
     return false
   }
 
-  return ['failed', 'blocked', 'waiting_external'].includes(lastExecutionState)
+  return ['failed', 'blocked', 'waiting_external', 'queued', 'running'].includes(lastExecutionState)
 }
 
 export function selectWorkerCycleCandidates<T extends WorkerCycleCandidate>(

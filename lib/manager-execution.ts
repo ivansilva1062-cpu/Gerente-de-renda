@@ -14,7 +14,10 @@ export type ManagerExecutionPlan = {
   execution: ExecutionRecord
 }
 
-export function planManagerExecution(opportunity: ManagerExecutionInput): ManagerExecutionPlan {
+export function planManagerExecution(
+  opportunity: ManagerExecutionInput,
+  attempt = 1,
+): ManagerExecutionPlan {
   const modules = runManagerModules(opportunity)
   const assessment = assessOpportunity(opportunity)
   const decision = decideManagerAction(modules, {
@@ -26,6 +29,7 @@ export function planManagerExecution(opportunity: ManagerExecutionInput): Manage
     opportunity,
     modules,
     decision,
+    attempt,
   })
 
   return { opportunity, modules, assessment, decision, execution }

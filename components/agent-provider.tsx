@@ -27,7 +27,6 @@ import {
 import {
   assessOpportunity,
 } from '@/lib/manager-modules'
-import { pickNextOpportunity } from '@/lib/execution-engine'
 
 interface AgentContextValue {
   status: AgentStatus
@@ -82,13 +81,6 @@ const uid = () =>
   Math.random()
     .toString(36)
     .slice(2, 10)
-
-/*
- * Quantas oportunidades independentes o agente
- * pode processar ao mesmo tempo. Mantido em sincronia
- * com o limite usado pelo Worker real (lib/worker-cycle.ts).
- */
-const MAX_PARALLEL_TASKS = 3
 
 const evaluateManagerModules = (
   opportunity: Pick<
@@ -200,19 +192,6 @@ export function AgentProvider({
 
   const [notifications, setNotifications] =
     useState<NotificationItem[]>([])
-
-  const [workerCycle, setWorkerCycle] =
-    useState({
-      lastExecutionAt: null as string | null,
-      nextExecutionAt: new Date(Date.now() + 60 * 60_000).toISOString(),
-      processedCount: 0,
-      executingCount: 0,
-      waitingHumanCount: 0,
-      completedCount: 0,
-      blockedCount: 0,
-      failedCount: 0,
-      confirmedEarnings: 0,
-    })
 
   /*
    * ==========================================
@@ -641,6 +620,105 @@ export function AgentProvider({
         }
       },
       [pushActivity],
+    )
+
+  /*
+   * ==========================================
+   * ESTADO REAL VINDO DO BANCO
+   * ==========================================
+   *
+   * O Worker (Cron ou início manual) roda inteiramente no servidor
+   * e persiste cada execução em execution_runs. Esta sincronização
+   * garante que nenhuma tarefa "suma" da interface: mesmo que o
+   * usuário feche e reabra o navegador, o estado real (queued,
+   * running, waiting_human, waiting_external, completed, failed)
+   * volta a aparecer, porque vem do banco — não da memória do React.
+   */
+  const syncExecutionsFromServer =
+    useCallback(
+      async () => {
+        try {
+          const response = await fetch('/api/execution', { cache: 'no-store' })
+          if (!response.ok) return
+
+          const data = await response.json() as {
+            history?: Array<{
+              execution_id: string
+              opportunity_id: string | null
+              title: string | null
+              source: string | null
+              state: string
+              attempt: number
+              error: string | null
+              evidence: string | null
+              intervention: { reason?: string } | null
+              started_at: string
+            }>
+          }
+
+          const rows = Array.isArray(data.history) ? data.history : []
+          if (rows.length === 0) return
+
+          setTasks((previous) => {
+            const byKey = new Map(
+              previous.map((task) => [task.opportunityId ?? task.id, task]),
+            )
+
+            for (const row of rows) {
+              const key = row.opportunity_id ?? row.execution_id
+              const existing = byKey.get(key)
+
+              const state: Task['state'] =
+                row.state === 'completed'
+                  ? 'done'
+                  : row.state === 'running' || row.state === 'queued'
+                    ? 'running'
+                    : 'pending'
+
+              const preparationStatus =
+                row.state === 'completed'
+                  ? 'completed'
+                  : row.state === 'waiting_human'
+                    ? 'requires_user'
+                    : row.state === 'waiting_external'
+                      ? 'ready'
+                      : row.state === 'failed' || row.state === 'blocked'
+                        ? 'failed'
+                        : 'preparing'
+
+              byKey.set(key, {
+                id: existing?.id ?? row.execution_id,
+                opportunityId: row.opportunity_id ?? existing?.opportunityId,
+                title: row.title ?? existing?.title ?? 'Oportunidade',
+                source: row.source ?? existing?.source ?? '—',
+                managerModules: existing?.managerModules,
+                state,
+                estimatedValue: existing?.estimatedValue ?? 0,
+                progress:
+                  state === 'done'
+                    ? 100
+                    : state === 'running'
+                      ? Math.max(existing?.progress ?? 0, 40)
+                      : Math.max(existing?.progress ?? 0, 20),
+                startedAt: existing?.startedAt ?? row.started_at,
+                actionUrl: existing?.actionUrl,
+                requiresUserAction: row.state === 'waiting_human',
+                preparationStatus,
+                pendingReason:
+                  row.error ??
+                  row.intervention?.reason ??
+                  (row.attempt > 1 ? `Nova tentativa automática (tentativa ${row.attempt}).` : existing?.pendingReason),
+                prepared: existing?.prepared,
+              })
+            }
+
+            return Array.from(byKey.values())
+          })
+        } catch (error) {
+          console.error('Erro ao sincronizar execuções do servidor:', error)
+        }
+      },
+      [],
     )
 
   /*
@@ -1392,95 +1470,20 @@ export function AgentProvider({
 
   /*
    * ==========================================
-   * FILA AUTOMÁTICA
+   * AUTONOMIA REAL (Cron + /api/worker)
    * ==========================================
    *
-   * Depende de startOpportunity, por isso
-   * é declarado logo após sua definição.
-   *
-   * Processa várias oportunidades independentes
-   * em paralelo (até MAX_PARALLEL_TASKS), em vez
-   * de iniciar apenas uma por vez — isso é o que
-   * faz o contador "tarefas em paralelo" refletir
-   * trabalho real em vez de ficar preso em 0/1.
+   * O frontend NÃO é mais responsável por disparar sozinho várias
+   * oportunidades em paralelo a cada render — isso fazia o "worker"
+   * depender da aba do navegador ficar aberta. Quem sustenta a
+   * operação contínua agora é o Cron da Vercel (vercel.json) batendo
+   * em /api/worker, que roda runContinuousCycle -> runWorkerCycle ->
+   * inspectOpportunity inteiramente no servidor, com fila persistida
+   * no banco (execution_runs) e retry com backoff — funciona mesmo
+   * com o navegador fechado. O usuário ainda pode iniciar qualquer
+   * oportunidade manualmente (startOpportunity), mas o preenchimento
+   * automático da fila de 3 vagas é responsabilidade do Worker/Cron.
    */
-
-  const autoQueueNextOpportunity =
-    useCallback(
-      () => {
-        if (
-          statusRef.current !==
-          'working'
-        ) {
-          return
-        }
-
-        const availableSlots =
-          MAX_PARALLEL_TASKS -
-          taskRunningRef.current.size
-
-        if (availableSlots <= 0) {
-          return
-        }
-
-        const candidates =
-          opportunities
-            .filter(
-              (opportunity) =>
-                opportunity.status ===
-                  'new' ||
-                opportunity.status ===
-                  'queued',
-            )
-            .map(
-              (opportunity) => ({
-                id: opportunity.id,
-                status: opportunity.status,
-                managerScore:
-                  opportunity.managerScore ??
-                  evaluateManagerModules(
-                    opportunity,
-                  ).score,
-                confidence:
-                  opportunity.confidence,
-                estimatedValue:
-                  opportunity.estimatedValue,
-              }),
-            )
-
-        const excluded =
-          new Set(
-            taskRunningRef.current,
-          )
-
-        for (
-          let slot = 0;
-          slot < availableSlots;
-          slot += 1
-        ) {
-          const nextOpportunity =
-            pickNextOpportunity(
-              candidates,
-              excluded,
-            )
-
-          if (!nextOpportunity) break
-
-          excluded.add(
-            nextOpportunity.id,
-          )
-
-          startOpportunity(
-            nextOpportunity.id,
-          )
-        }
-      },
-      [
-        evaluateManagerModules,
-        opportunities,
-        startOpportunity,
-      ],
-    )
 
   /*
    * ==========================================
@@ -1741,12 +1744,6 @@ export function AgentProvider({
     runDiscoveryCycle,
   ])
 
-  useEffect(() => {
-    if (statusRef.current === 'working') {
-      autoQueueNextOpportunity()
-    }
-  }, [autoQueueNextOpportunity, opportunities, status])
-
   /*
    * ==========================================
    * ATUALIZAÇÃO DO SALDO
@@ -1807,42 +1804,24 @@ export function AgentProvider({
 
   /*
    * ==========================================
-   * RESUMO DO CICLO DO WORKER
+   * SINCRONIZAÇÃO COM O WORKER REAL
    * ==========================================
    *
-   * Depende de runningTasks e pendingTasks,
-   * por isso é declarado logo após ambos.
-   */
-
-  const refreshWorkerCycleSummary =
-    useCallback(
-      () => {
-        const nextExecutionAt = new Date(Date.now() + 60 * 60_000).toISOString()
-
-        setWorkerCycle((previous) => ({
-          ...previous,
-          nextExecutionAt,
-          processedCount: opportunities.filter((opportunity) => opportunity.status === 'done').length + tasks.filter((task) => task.state === 'done').length,
-          executingCount: runningTasks.length,
-          waitingHumanCount: pendingTasks.filter((task) => task.requiresUserAction || task.pendingReason?.toLowerCase().includes('ação humana') || task.pendingReason?.toLowerCase().includes('cadastro')).length + opportunities.filter((opportunity) => opportunity.requiresUserAction || opportunity.requiresSignup).length,
-          completedCount: opportunities.filter((opportunity) => opportunity.status === 'done').length + tasks.filter((task) => task.state === 'done').length,
-          blockedCount: opportunities.filter((opportunity) => opportunity.managerBlocked).length,
-          failedCount: opportunities.filter((opportunity) => opportunity.status === 'pending' && opportunity.preparationStatus === 'failed').length + tasks.filter((task) => task.preparationStatus === 'failed').length,
-          confirmedEarnings: transactions.reduce((sum, transaction) => sum + transaction.amount, 0),
-        }))
-      },
-      [opportunities, pendingTasks, runningTasks, tasks, transactions],
-    )
-
-  /*
-   * ==========================================
-   * CONTEXT
-   * ==========================================
+   * A cada 20 segundos, e imediatamente ao montar. Isso é apenas
+   * LEITURA do estado que o Worker (Cron ou execução manual) já
+   * persistiu no servidor — nenhuma execução é disparada por este
+   * intervalo, diferente do antigo ciclo de auto-fila do cliente.
    */
 
   useEffect(() => {
-    refreshWorkerCycleSummary()
-  }, [refreshWorkerCycleSummary])
+    void syncExecutionsFromServer()
+
+    const interval = setInterval(() => {
+      void syncExecutionsFromServer()
+    }, 20_000)
+
+    return () => clearInterval(interval)
+  }, [syncExecutionsFromServer])
 
   const unreadNotifications = useMemo(
     () => notifications.filter((notification) => !notification.read).length,

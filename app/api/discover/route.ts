@@ -908,8 +908,9 @@ async function cleanOldContent() {
   ) {
     await sql`
       DELETE FROM opportunities
-      WHERE LOWER(title)
-      LIKE ${`%${phrase.toLowerCase()}%`}
+      WHERE status IN ('new', 'queued')
+        AND LOWER(title)
+        LIKE ${`%${phrase.toLowerCase()}%`}
     `
   }
 
@@ -918,8 +919,9 @@ async function cleanOldContent() {
   ) {
     await sql`
       DELETE FROM opportunities
-      WHERE LOWER(url)
-      LIKE ${`%${word.toLowerCase()}%`}
+      WHERE status IN ('new', 'queued')
+        AND LOWER(url)
+        LIKE ${`%${word.toLowerCase()}%`}
     `
   }
 }

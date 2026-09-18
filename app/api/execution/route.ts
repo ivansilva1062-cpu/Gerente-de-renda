@@ -10,8 +10,31 @@ import {
   transitionExecution,
   type ExecutionRecord,
 } from '@/lib/execution-engine'
-import { persistExecution } from '@/lib/execution-store'
+import { persistExecution, getExecutionHistory } from '@/lib/execution-store'
 import { requestHasActiveSession } from '@/lib/auth-server'
+
+/*
+ * ==========================================
+ * DIAGNÓSTICO — HISTÓRICO REAL DE EXECUÇÕES
+ * ==========================================
+ *
+ * Fonte de dados da página /diagnostico. Sempre lê o estado
+ * persistido no banco (execution_runs), nunca estado local do
+ * navegador — o Worker continua existindo mesmo com a aba fechada.
+ */
+export async function GET() {
+  if (!(await requestHasActiveSession())) {
+    return NextResponse.json({ success: false, error: 'Autenticação necessária.' }, { status: 401 })
+  }
+  try {
+    const history = await getExecutionHistory(100)
+    return NextResponse.json({ success: true, history })
+  } catch (error) {
+    console.error('Erro ao consultar histórico de execuções:', error)
+    return NextResponse.json({ success: false, error: 'Não foi possível consultar o histórico.' }, { status: 500 })
+  }
+}
+
 
 type OpportunityRow = OpportunityInput & { id: string }
 
