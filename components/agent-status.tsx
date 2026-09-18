@@ -78,6 +78,14 @@ export function LiveStatusLine() {
       </span>
     )
   }
+  if (runningTasks.length === 0) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
+        <Clock className="size-3.5" />
+        Nenhuma tarefa executável agora — monitorando oportunidades
+      </span>
+    )
+  }
   return (
     <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
       <Loader2 className="size-3.5 animate-spin text-success" />

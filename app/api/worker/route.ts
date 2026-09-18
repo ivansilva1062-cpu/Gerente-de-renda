@@ -6,6 +6,7 @@ import { sql } from '@/lib/db'
 import { executionNextStep, planManagerExecution } from '@/lib/manager-execution'
 import { decideManagerAction } from '@/lib/manager-decision'
 import {
+  classifyExecutionState,
   createExecution,
   isSensitiveAction,
   sensitiveActionReason,
@@ -456,14 +457,31 @@ async function runDiscovery(
 }
 
 async function getCycleCandidates() {
+  /*
+   * Uma oportunidade "pending" cuja última execução falhou
+   * (Browserbase indisponível, timeout, erro pontual) volta
+   * automaticamente para a fila de monitoramento/retry.
+   * Isso NÃO inclui waiting_human, waiting_external, blocked
+   * ou completed — essas continuam fora do ciclo automático.
+   */
   const rows = await sql`
-    SELECT id, title, source, category, description, action_required,
-      estimated_value, confidence, status, url, requires_signup, requires_user_action
-    FROM opportunities
-    WHERE status IN ('new', 'queued')
-      AND title IS NOT NULL
-      AND url IS NOT NULL
-    ORDER BY manager_blocked ASC, manager_score DESC, confidence DESC, estimated_value DESC, created_at DESC NULLS LAST
+    SELECT o.id, o.title, o.source, o.category, o.description, o.action_required,
+      o.estimated_value, o.confidence, o.status, o.url, o.requires_signup, o.requires_user_action
+    FROM opportunities o
+    WHERE o.title IS NOT NULL
+      AND o.url IS NOT NULL
+      AND (
+        o.status IN ('new', 'queued')
+        OR (
+          o.status = 'pending'
+          AND EXISTS (
+            SELECT 1 FROM execution_runs er
+            WHERE er.id = 'execution-' || o.id
+              AND er.state = 'failed'
+          )
+        )
+      )
+    ORDER BY o.manager_blocked ASC, o.manager_score DESC, o.confidence DESC, o.estimated_value DESC, o.created_at DESC NULLS LAST
     LIMIT 12
   `
   return rows as OpportunityRow[]
@@ -604,6 +622,7 @@ async function inspectOpportunity(
     return {
       success: execution.state === 'waiting_human',
       state: execution.state,
+      classification: classifyExecutionState(execution.state),
       reason: assessment.summary,
       assessment,
       managerDecision,
@@ -627,11 +646,19 @@ async function inspectOpportunity(
     })
     await persistExecution(execution)
 
+    await sql`
+      UPDATE opportunities
+      SET status = 'pending'
+      WHERE id = ${opportunity.id}
+    `
+
     return {
       success: false,
       state: execution.state,
+      classification: classifyExecutionState(execution.state),
       reason: execution.error,
       execution,
+      nextAction: executionNextStep(execution),
     }
   }
 
@@ -652,11 +679,19 @@ async function inspectOpportunity(
     })
     await persistExecution(execution)
 
+    await sql`
+      UPDATE opportunities
+      SET status = 'pending'
+      WHERE id = ${opportunity.id}
+    `
+
     return {
       success: false,
       state: execution.state,
+      classification: classifyExecutionState(execution.state),
       reason: execution.error,
       execution,
+      nextAction: executionNextStep(execution),
     }
   }
 
@@ -968,6 +1003,8 @@ async function inspectOpportunity(
 
       state: execution.state,
 
+      classification: classifyExecutionState(execution.state),
+
       opportunity: {
         id:
           opportunity.id,
@@ -1051,11 +1088,19 @@ async function inspectOpportunity(
       createdAt: new Date().toISOString(),
     })
 
+    await sql`
+      UPDATE opportunities
+      SET status = 'pending'
+      WHERE id = ${opportunity.id}
+    `
+
     return {
       success: false,
       state: execution.state,
+      classification: classifyExecutionState(execution.state),
       reason: detail,
       execution,
+      nextAction: executionNextStep(execution),
     }
   } finally {
     /*

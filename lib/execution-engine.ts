@@ -231,3 +231,38 @@ export function pickNextOpportunity(
 
   return next ?? null
 }
+
+/*
+ * ==========================================
+ * CLASSIFICAÇÃO REAL DA OPORTUNIDADE
+ * ==========================================
+ *
+ * Fonte única de verdade sobre a situação real
+ * de uma oportunidade, usada tanto pelas rotas
+ * de API quanto pelo painel. GANHO_CONFIRMADO
+ * não é derivado do estado de execução: só existe
+ * quando há um registro real em /api/earnings.
+ */
+export type OpportunityClassification =
+  | 'EXECUTAVEL_AUTOMATICAMENTE'
+  | 'MONITORAMENTO'
+  | 'AGUARDANDO_EXTERNO'
+  | 'AGUARDANDO_USUARIO'
+  | 'CONCLUIDA'
+
+export function classifyExecutionState(state: ExecutionState): OpportunityClassification {
+  switch (state) {
+    case 'queued':
+    case 'running':
+      return 'EXECUTAVEL_AUTOMATICAMENTE'
+    case 'waiting_human':
+      return 'AGUARDANDO_USUARIO'
+    case 'waiting_external':
+      return 'AGUARDANDO_EXTERNO'
+    case 'completed':
+      return 'CONCLUIDA'
+    case 'blocked':
+    case 'failed':
+      return 'MONITORAMENTO'
+  }
+}

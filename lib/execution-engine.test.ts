@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  classifyExecutionState,
   createExecution,
   pickNextOpportunity,
   summarizeExecutionStates,
@@ -203,6 +204,16 @@ test('resume os estados do painel sem confundir estimativa com conclusão', () =
     blocked: 1,
     failed: 1,
   })
+})
+
+test('classifica cada estado de execução em exatamente uma das seis situações reais', () => {
+  assert.equal(classifyExecutionState('queued'), 'EXECUTAVEL_AUTOMATICAMENTE')
+  assert.equal(classifyExecutionState('running'), 'EXECUTAVEL_AUTOMATICAMENTE')
+  assert.equal(classifyExecutionState('waiting_human'), 'AGUARDANDO_USUARIO')
+  assert.equal(classifyExecutionState('waiting_external'), 'AGUARDANDO_EXTERNO')
+  assert.equal(classifyExecutionState('completed'), 'CONCLUIDA')
+  assert.equal(classifyExecutionState('blocked'), 'MONITORAMENTO')
+  assert.equal(classifyExecutionState('failed'), 'MONITORAMENTO')
 })
 
 test('autoriza Worker por sessão ativa ou segredo de cron, mas nunca sem credencial', () => {

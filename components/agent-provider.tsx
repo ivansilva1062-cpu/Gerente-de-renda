@@ -83,6 +83,13 @@ const uid = () =>
     .toString(36)
     .slice(2, 10)
 
+/*
+ * Quantas oportunidades independentes o agente
+ * pode processar ao mesmo tempo. Mantido em sincronia
+ * com o limite usado pelo Worker real (lib/worker-cycle.ts).
+ */
+const MAX_PARALLEL_TASKS = 3
+
 const evaluateManagerModules = (
   opportunity: Pick<
     Opportunity,
@@ -906,14 +913,14 @@ export function AgentProvider({
    * O Worker não finge que acessou
    * uma plataforma como se fosse o usuário.
    *
-   * Ele:
-   *
-   * 1. recebe a oportunidade;
-   * 2. cria a tarefa;
-   * 3. verifica se existe ação humana;
-   * 4. coloca em pendência quando necessário;
-   * 5. registra o estado;
-   * 6. deixa o restante do sistema continuar.
+   * O estado real da tarefa é sempre decidido
+   * pelo Execution Engine (execution.state)
+   * devolvido pelo /api/worker — nunca por
+   * suposições locais como "tem cadastro,
+   * então é pendente". Isso evita que uma
+   * oportunidade já preparada/executada pelo
+   * agente fique presa artificialmente como
+   * "Aguardando cadastro".
    */
 
   const processOpportunity =
@@ -952,202 +959,198 @@ export function AgentProvider({
           return
         }
 
+        if (!opportunity.url) {
+          setTasks((previous) =>
+            previous.map((task) =>
+              task.id === taskId
+                ? {
+                    ...task,
+                    state: 'pending',
+                    progress: 10,
+                    requiresUserAction: false,
+                    preparationStatus: 'failed',
+                    pendingReason: 'A oportunidade não possui uma URL de ação disponível.',
+                  }
+                : task,
+            ),
+          )
+
+          updateOpportunityStatus(opportunity.id, 'pending')
+          pushActivity({
+            kind: 'pending',
+            message: `Monitorando — ${opportunity.title}: não existe URL disponível.`,
+          })
+          return
+        }
+
         /*
-         * Inspeção operacional da fonte oficial.
-         * O Worker mantém o Browserbase isolado e nunca envia
-         * credenciais, dados sensíveis ou confirma pagamentos.
+         * Timeout de segurança: uma oportunidade travada
+         * não pode consumir o ciclo inteiro do agente nem
+         * ficar presa em "Executando" para sempre.
          */
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 45_000)
+
         try {
           const response = await fetch(
             `/api/worker?opportunityId=${encodeURIComponent(opportunity.id)}`,
             {
               method: 'GET',
               cache: 'no-store',
+              signal: controller.signal,
             },
           )
 
-          if (response.ok) {
-            const data = await response.json()
-            const page = data.result?.page
+          if (!response.ok) {
+            throw new Error(`O Worker respondeu com status ${response.status}.`)
+          }
 
-            if (page?.humanActionRequired) {
-              setTasks((previous) =>
-                previous.map((task) =>
-                  task.id === taskId
-                    ? {
-                        ...task,
-                        state: 'pending',
-                        progress: 25,
-                        requiresUserAction: true,
-                        preparationStatus: 'requires_user',
-                        pendingReason:
-                          'A fonte oficial exige uma ação humana antes de continuar.',
-                      }
-                    : task,
-                ),
-              )
-
-              updateOpportunityStatus(opportunity.id, 'pending')
-              pushActivity({
-                kind: 'pending',
-                message: `Aguardando ação humana na fonte oficial — ${opportunity.title}.`,
-              })
-              return
+          const data = await response.json() as {
+            result?: {
+              execution?: { state?: string; error?: string; intervention?: { reason?: string } }
+              nextAction?: string
             }
           }
-        } catch (error) {
-          console.error('Worker indisponível; mantendo fluxo local:', error)
-        }
 
-        /*
-         * ==================================
-         * VERIFICAÇÃO DE URL
-         * ==================================
-         */
+          const execution = data.result?.execution
+          const state = execution?.state
 
-        if (
-          !opportunity.url
-        ) {
-          setTasks(
-            (previous) =>
-              previous.map(
-                (task) =>
-                  task.id ===
-                    taskId
-                    ? {
-                        ...task,
-                        state:
-                          'pending',
-                        progress:
-                          10,
-                        pendingReason:
-                          'A oportunidade não possui uma URL de ação disponível.',
-                      }
-                    : task,
-              ),
-          )
-
-          updateOpportunityStatus(
-            opportunity.id,
-            'pending',
-          )
-
-          pushActivity({
-            kind:
-              'pending',
-
-            message:
-              `Aguardando ação — ${opportunity.title}: não existe URL disponível.`,
-          })
-
-          return
-        }
-
-        /*
-         * ==================================
-         * AÇÃO HUMANA
-         * ==================================
-         *
-         * A maioria das plataformas
-         * legítimas exige cadastro,
-         * login, identidade ou alguma
-         * decisão do usuário.
-         *
-         * Nesses casos NÃO fingimos.
-         */
-
-        if (
-          opportunity.requiresUserAction ||
-          opportunity.requiresSignup
-        ) {
-          setTasks(
-            (previous) =>
-              previous.map(
-                (task) =>
-                  task.id ===
-                    taskId
-                    ? {
-                        ...task,
-
-                        state:
-                          'pending',
-
-                        progress:
-                          25,
-
-                        pendingReason:
-                          opportunity.requiresSignup
-                            ? 'É necessário cadastro ou ação do usuário para continuar.'
-                            : 'É necessária uma ação do usuário para continuar.',
-                      }
-                    : task,
-              ),
-          )
-
-          updateOpportunityStatus(
-            opportunity.id,
-            'pending',
-          )
-
-          pushActivity({
-            kind:
-              'pending',
-
-            message:
-              opportunity.requiresSignup
-                ? `Aguardando cadastro — ${opportunity.title}.`
-                : `Aguardando ação do Ivan — ${opportunity.title}.`,
-          })
-
-          return
-        }
-
-        /*
-         * ==================================
-         * SEM AÇÃO HUMANA DECLARADA
-         * ==================================
-         *
-         * Ainda assim não vamos marcar
-         * como concluída automaticamente.
-         *
-         * O sistema não possui confirmação
-         * externa de execução.
-         */
-
-        setTasks(
-          (previous) =>
-            previous.map(
-              (task) =>
-                task.id ===
-                  taskId
+          if (state === 'waiting_human') {
+            setTasks((previous) =>
+              previous.map((task) =>
+                task.id === taskId
                   ? {
                       ...task,
-
-                      state:
-                        'pending',
-
-                      progress:
-                        40,
-
+                      state: 'pending',
+                      progress: 60,
+                      requiresUserAction: true,
+                      preparationStatus: 'requires_user',
                       pendingReason:
-                        'Aguardando confirmação da execução pela fonte oficial.',
+                        execution?.intervention?.reason ??
+                        'A fonte oficial exige uma ação humana antes de continuar.',
                     }
                   : task,
+              ),
+            )
+
+            updateOpportunityStatus(opportunity.id, 'pending')
+            pushActivity({
+              kind: 'pending',
+              message: `Aguardando você — ${opportunity.title}.`,
+            })
+            return
+          }
+
+          if (state === 'waiting_external') {
+            setTasks((previous) =>
+              previous.map((task) =>
+                task.id === taskId
+                  ? {
+                      ...task,
+                      state: 'pending',
+                      progress: 75,
+                      requiresUserAction: false,
+                      preparationStatus: 'ready',
+                      pendingReason:
+                        'A etapa disponível já foi enviada pelo agente; agora depende do processamento da própria plataforma.',
+                    }
+                  : task,
+              ),
+            )
+
+            updateOpportunityStatus(opportunity.id, 'pending')
+            pushActivity({
+              kind: 'pending',
+              message: `Aguardando processamento externo — ${opportunity.title}.`,
+            })
+            return
+          }
+
+          if (state === 'completed') {
+            setTasks((previous) =>
+              previous.map((task) =>
+                task.id === taskId
+                  ? {
+                      ...task,
+                      state: 'done',
+                      progress: 100,
+                      requiresUserAction: false,
+                      preparationStatus: 'completed',
+                      pendingReason: undefined,
+                    }
+                  : task,
+              ),
+            )
+
+            updateOpportunityStatus(opportunity.id, 'done')
+            pushActivity({
+              kind: 'resolved',
+              message: `Preparação concluída sem ação humana — ${opportunity.title}.`,
+            })
+            return
+          }
+
+          /*
+           * blocked ou failed: não há evidência de conclusão,
+           * então a oportunidade volta para monitoramento e
+           * pode ser retentada automaticamente pelo Worker,
+           * sem travar as demais oportunidades.
+           */
+          setTasks((previous) =>
+            previous.map((task) =>
+              task.id === taskId
+                ? {
+                    ...task,
+                    state: 'pending',
+                    progress: Math.max(task.progress, 20),
+                    requiresUserAction: false,
+                    preparationStatus: 'failed',
+                    pendingReason:
+                      execution?.error ?? 'O agente vai tentar novamente automaticamente.',
+                  }
+                : task,
             ),
-        )
+          )
 
-        updateOpportunityStatus(
-          opportunity.id,
-          'pending',
-        )
+          updateOpportunityStatus(opportunity.id, 'pending')
+          pushActivity({
+            kind: 'system',
+            message:
+              state === 'blocked'
+                ? `Gerente bloqueou a oportunidade — ${opportunity.title}.`
+                : `Falha isolada — ${opportunity.title}. Nova tentativa automática no próximo ciclo.`,
+          })
+        } catch (error) {
+          const timedOut = error instanceof DOMException && error.name === 'AbortError'
+          console.error('Worker indisponível ou expirou:', error)
 
-        pushActivity({
-          kind:
-            'pending',
+          setTasks((previous) =>
+            previous.map((task) =>
+              task.id === taskId
+                ? {
+                    ...task,
+                    state: 'pending',
+                    progress: Math.max(task.progress, 15),
+                    requiresUserAction: false,
+                    preparationStatus: 'failed',
+                    pendingReason: timedOut
+                      ? 'O Worker excedeu o tempo limite; nova tentativa automática em breve.'
+                      : 'O Worker está indisponível; nova tentativa automática em breve.',
+                  }
+                : task,
+            ),
+          )
 
-          message:
-            `Aguardando confirmação externa — ${opportunity.title}.`,
-        })
+          updateOpportunityStatus(opportunity.id, 'pending')
+          pushActivity({
+            kind: 'system',
+            message: timedOut
+              ? `Tempo esgotado ao consultar o Worker — ${opportunity.title}.`
+              : `Worker indisponível — ${opportunity.title}.`,
+          })
+        } finally {
+          clearTimeout(timeoutId)
+        }
       },
       [
         pushActivity,
@@ -1394,6 +1397,12 @@ export function AgentProvider({
    *
    * Depende de startOpportunity, por isso
    * é declarado logo após sua definição.
+   *
+   * Processa várias oportunidades independentes
+   * em paralelo (até MAX_PARALLEL_TASKS), em vez
+   * de iniciar apenas uma por vez — isso é o que
+   * faz o contador "tarefas em paralelo" refletir
+   * trabalho real em vez de ficar preso em 0/1.
    */
 
   const autoQueueNextOpportunity =
@@ -1403,6 +1412,14 @@ export function AgentProvider({
           statusRef.current !==
           'working'
         ) {
+          return
+        }
+
+        const availableSlots =
+          MAX_PARALLEL_TASKS -
+          taskRunningRef.current.size
+
+        if (availableSlots <= 0) {
           return
         }
 
@@ -1431,24 +1448,35 @@ export function AgentProvider({
               }),
             )
 
-        const nextOpportunity =
-          pickNextOpportunity(
-            candidates,
+        const excluded =
+          new Set(
             taskRunningRef.current,
           )
 
-        if (
-          nextOpportunity &&
-          !taskRunningRef.current.has(
+        for (
+          let slot = 0;
+          slot < availableSlots;
+          slot += 1
+        ) {
+          const nextOpportunity =
+            pickNextOpportunity(
+              candidates,
+              excluded,
+            )
+
+          if (!nextOpportunity) break
+
+          excluded.add(
             nextOpportunity.id,
           )
-        ) {
+
           startOpportunity(
             nextOpportunity.id,
           )
         }
       },
       [
+        evaluateManagerModules,
         opportunities,
         startOpportunity,
       ],
