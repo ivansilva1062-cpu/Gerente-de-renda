@@ -22,6 +22,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { usd } from '@/lib/format'
 import { ManagerCabin } from '@/components/manager-cabin'
+import { NextActionCard } from '@/components/next-action-card'
 
 export default function DashboardPage() {
   const { today, total, dailyGoal, opportunities, runningTasks, pendingTasks } = useAgent()
@@ -131,6 +132,8 @@ export default function DashboardPage() {
           </p>
         </CardContent>
       </Card>
+
+      <NextActionCard />
 
       <ManagerCabin />
 
