@@ -58,6 +58,16 @@ async function ensureExecutionSchema() {
       `
 
       await sql`
+        ALTER TABLE execution_runs
+        ADD COLUMN IF NOT EXISTS integration_available BOOLEAN
+      `
+
+      await sql`
+        ALTER TABLE execution_runs
+        ADD COLUMN IF NOT EXISTS pending_integration_note TEXT
+      `
+
+      await sql`
         CREATE TABLE IF NOT EXISTS execution_events (
           id BIGSERIAL PRIMARY KEY,
           execution_id TEXT NOT NULL,
@@ -85,7 +95,8 @@ export async function persistExecution(execution: ExecutionRecord) {
   await sql`
     INSERT INTO execution_runs (
       id, opportunity_id, state, lifecycle_state, action, opportunity, intervention,
-      evidence, error, attempt, next_attempt_at, action_type, created_at, updated_at
+      evidence, error, attempt, next_attempt_at, action_type, integration_available,
+      pending_integration_note, created_at, updated_at
     )
     VALUES (
       ${execution.id},
@@ -100,6 +111,8 @@ export async function persistExecution(execution: ExecutionRecord) {
       ${execution.attempt},
       ${execution.nextAttemptAt ?? null},
       ${execution.actionType ?? null},
+      ${execution.integrationAvailable ?? null},
+      ${execution.pendingIntegrationNote ?? null},
       ${execution.createdAt},
       ${execution.updatedAt}
     )
@@ -113,6 +126,8 @@ export async function persistExecution(execution: ExecutionRecord) {
       attempt = EXCLUDED.attempt,
       next_attempt_at = EXCLUDED.next_attempt_at,
       action_type = EXCLUDED.action_type,
+      integration_available = EXCLUDED.integration_available,
+      pending_integration_note = EXCLUDED.pending_integration_note,
       updated_at = EXCLUDED.updated_at
   `
 
@@ -168,6 +183,8 @@ export async function getExecutionHistory(limit = 100) {
       er.state,
       er.action,
       er.action_type,
+      er.integration_available,
+      er.pending_integration_note,
       er.attempt,
       er.evidence,
       er.error,
@@ -191,7 +208,7 @@ export async function getExecutionHistory(limit = 100) {
  * `confirmedEarnings` v\u00eam exclusivamente da tabela earnings.
  */
 export async function getExecutionMetrics() {
-  const [discovered, qualified, executed, byState, retrying, earnings] = await Promise.all([
+  const [discovered, qualified, executed, byState, retrying, pendingIntegration, earnings] = await Promise.all([
     sql`SELECT COUNT(*)::int AS count FROM opportunities`,
     // Qualificada = já avaliada pelo Avaliador/Risco e não bloqueada pelo Gerente.
     sql`SELECT COUNT(*)::int AS count FROM opportunities WHERE manager_blocked = FALSE AND manager_score > 0`,
@@ -203,6 +220,8 @@ export async function getExecutionMetrics() {
     `,
     // Retentando = falhou mas já tem próxima tentativa agendada (backoff em andamento).
     sql`SELECT COUNT(*)::int AS count FROM execution_runs WHERE state = 'failed' AND next_attempt_at IS NOT NULL AND next_attempt_at > NOW()`,
+    // Dependem de integração de API oficial ainda não autorizada (ver AUTHORIZED_API_INTEGRATIONS).
+    sql`SELECT COUNT(*)::int AS count FROM execution_runs WHERE integration_available = FALSE`,
     sql`SELECT COUNT(*)::int AS count, COALESCE(SUM(amount), 0) AS total FROM earnings`,
   ])
 
@@ -241,6 +260,7 @@ export async function getExecutionMetrics() {
     retrying: Number(retrying[0]?.count ?? 0),
     failures: failed,
     blocked,
+    pendingIntegration: Number(pendingIntegration[0]?.count ?? 0),
     confirmedEarnings: confirmedCount,
     confirmedValue,
     costs,

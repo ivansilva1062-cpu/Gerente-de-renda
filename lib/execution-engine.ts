@@ -56,6 +56,18 @@ export type ExecutionRecord = {
    * o estágio genérico (inspect/prepare) do Execution Engine.
    */
   actionType?: string
+  /*
+   * Só é `true` quando existe credencial/parceria de API oficial
+   * configurada para o domínio (AUTHORIZED_API_INTEGRATIONS). Nunca
+   * assumida como verdadeira apenas porque a página menciona "API".
+   */
+  integrationAvailable?: boolean
+  /*
+   * Preenchido quando a oportunidade dependeria de uma integração
+   * oficial ainda não autorizada — deixa explícito o que falta em
+   * vez de fingir execução via API.
+   */
+  pendingIntegrationNote?: string
 }
 
 export type ExecutionContext = {
@@ -219,7 +231,7 @@ const transitions: Record<ExecutionState, ExecutionState[]> = {
 export function transitionExecution(
   execution: ExecutionRecord,
   nextState: ExecutionState,
-  details: Partial<Pick<ExecutionRecord, 'intervention' | 'error' | 'evidence' | 'attempt' | 'nextAttemptAt' | 'actionType'>> = {},
+  details: Partial<Pick<ExecutionRecord, 'intervention' | 'error' | 'evidence' | 'attempt' | 'nextAttemptAt' | 'actionType' | 'integrationAvailable' | 'pendingIntegrationNote'>> = {},
   now?: string,
 ): ExecutionRecord {
   if (!transitions[execution.state].includes(nextState)) {

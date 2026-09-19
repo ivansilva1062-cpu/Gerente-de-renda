@@ -726,13 +726,13 @@ async function inspectOpportunity(
   const retryState = await getExecutionRetryState(opportunity.id)
   const plan = planManagerExecution({ ...executionOpportunity, id: opportunity.id }, Math.max(1, retryState.attempt))
   const { assessment, decision: managerDecision } = plan
-  const { actionType } = classifyExecutionAction({
+  const { actionType, integrationAvailable, pendingIntegrationNote } = classifyExecutionAction({
     category: opportunity.category,
     title: opportunity.title,
     description: executionOpportunity.description,
     url: opportunity.url ?? undefined,
   })
-  let execution = { ...plan.execution, actionType }
+  let execution = { ...plan.execution, actionType, integrationAvailable, pendingIntegrationNote }
 
   await persistExecution(execution)
 

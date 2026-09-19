@@ -16,6 +16,8 @@ type ExecutionHistoryRow = {
   state: string
   action: string
   action_type: string | null
+  integration_available: boolean | null
+  pending_integration_note: string | null
   attempt: number
   evidence: string | null
   error: string | null
@@ -35,6 +37,7 @@ type Metrics = {
   retrying: number
   failures: number
   blocked: number
+  pendingIntegration: number
   confirmedEarnings: number
   confirmedValue: number
   costs: number
@@ -123,6 +126,7 @@ export default function DiagnosticoPage() {
           <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Aguardando você</p><p className="font-mono text-xl font-semibold">{metrics.waitingUser}</p></CardContent></Card>
           <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Retentando</p><p className="font-mono text-xl font-semibold">{metrics.retrying}</p></CardContent></Card>
           <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Falhas</p><p className="font-mono text-xl font-semibold">{metrics.failures}</p></CardContent></Card>
+          <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Aguardando integração de API</p><p className="font-mono text-xl font-semibold">{metrics.pendingIntegration}</p></CardContent></Card>
           <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Ganhos confirmados</p><p className="font-mono text-xl font-semibold text-success">{metrics.confirmedEarnings}</p></CardContent></Card>
           <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Valor confirmado</p><p className="font-mono text-xl font-semibold text-success">{usd(metrics.confirmedValue)}</p></CardContent></Card>
           <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Custos</p><p className="font-mono text-xl font-semibold">{usd(metrics.costs)}</p></CardContent></Card>
@@ -153,6 +157,9 @@ export default function DiagnosticoPage() {
                 </p>
                 {row.evidence && <p className="mt-1 text-xs text-muted-foreground">{row.evidence}</p>}
                 {row.error && <p className="mt-1 text-xs text-destructive">{row.error}</p>}
+                {row.pending_integration_note && (
+                  <p className="mt-1 text-xs text-warning-foreground">⚠️ {row.pending_integration_note}</p>
+                )}
                 {row.intervention?.reason && <p className="mt-1 text-xs text-warning-foreground">{row.intervention.reason}</p>}
                 <p className="mt-1 text-[0.7rem] text-muted-foreground">
                   início {new Date(row.started_at).toLocaleString('pt-BR')} • atualizado {new Date(row.finished_at).toLocaleString('pt-BR')}

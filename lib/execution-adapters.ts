@@ -99,8 +99,58 @@ export function resolveAdapter(category?: OpportunityCategory | string): Executi
   }
 }
 
-export function classifyExecutionAction(input: AdapterInput): { actionType: ActionType; description: string } {
+/*
+ * ==========================================
+ * INTEGRAÇÕES OFICIAIS AUTORIZADAS
+ * ==========================================
+ *
+ * O Gerente NUNCA finge ter uma integração de API que não existe.
+ * Só existe integração real quando há credencial/parceria oficial
+ * configurada para aquele domínio específico via
+ * AUTHORIZED_API_INTEGRATIONS (lista de hostnames separados por
+ * vírgula). Sem isso, mesmo que a página mencione "API"/"developer",
+ * a execução real continua sendo apenas a inspeção/preenchimento
+ * seguro via navegador (Browserbase) — nunca uma chamada de API
+ * inventada.
+ */
+function authorizedApiHosts(): Set<string> {
+  const raw = process.env.AUTHORIZED_API_INTEGRATIONS ?? ''
+  return new Set(
+    raw
+      .split(',')
+      .map((host) => host.trim().toLowerCase())
+      .filter(Boolean),
+  )
+}
+
+function hostnameOf(url?: string) {
+  try {
+    return url ? new URL(url).hostname.toLowerCase() : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export function classifyExecutionAction(
+  input: AdapterInput,
+): { actionType: ActionType; description: string; integrationAvailable: boolean; pendingIntegrationNote?: string } {
   const adapter = resolveAdapter(input.category)
-  const actionType = adapter.determineAction(input)
-  return { actionType, description: adapter.describeAction(actionType) }
+  const detected = adapter.determineAction(input)
+  const host = hostnameOf(input.url)
+  const authorized = Boolean(host && authorizedApiHosts().has(host))
+
+  if (detected === 'api' && !authorized) {
+    return {
+      actionType: 'form',
+      description: adapter.describeAction('form'),
+      integrationAvailable: false,
+      pendingIntegrationNote: `A fonte sinaliza uma API oficial, mas nenhuma credencial/parceria autorizada está configurada para ${host ?? 'este domínio'}. Nenhuma chamada de API foi feita; o Worker só inspeciona e preenche a página com dados já autorizados.`,
+    }
+  }
+
+  return {
+    actionType: detected,
+    description: adapter.describeAction(detected),
+    integrationAvailable: detected !== 'api' || authorized,
+  }
 }
