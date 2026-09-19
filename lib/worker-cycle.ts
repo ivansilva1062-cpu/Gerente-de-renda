@@ -9,6 +9,21 @@ export type WorkerCycleResult = {
   error?: string
 }
 
+/*
+ * ==========================================
+ * TIMEOUT DE CLAIM TRAVADO
+ * ==========================================
+ *
+ * `maxDuration` da rota /api/worker é 60s (ver app/api/worker/route.ts):
+ * nenhuma reserva (`worker_claimed_at`) pode legitimamente durar mais
+ * que isso. O valor anterior (15 minutos) fazia uma oportunidade presa
+ * por um processo morto (timeout duro da Vercel, sem exceção JS) esperar
+ * até 3 ciclos de cron (5 min cada) antes de voltar a ser candidata.
+ * 5 minutos = 1 ciclo de cron, com margem confortável acima dos 60s
+ * reais de execução.
+ */
+export const STALE_CLAIM_TIMEOUT_MINUTES = 5
+
 export function shouldIncludeInCycle(
   status: string | null | undefined,
   lastExecutionState?: string | null,

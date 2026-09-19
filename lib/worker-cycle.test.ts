@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { runWorkerCycle, selectWorkerCycleCandidates, shouldIncludeInCycle } from './worker-cycle.ts'
+import { runWorkerCycle, selectWorkerCycleCandidates, shouldIncludeInCycle, STALE_CLAIM_TIMEOUT_MINUTES } from './worker-cycle.ts'
 
 const candidate = (id: string, overrides: Record<string, unknown> = {}) => ({
   id,
@@ -217,6 +217,43 @@ test('sem candidatos elegíveis, o ciclo fica corretamente sem nenhuma tarefa ex
 
   assert.deepEqual(result.selectedIds, [])
   assert.deepEqual(result.results, [])
+})
+
+test('timeout de claim travado é curto o suficiente para caber em 1 ciclo de cron (5 min)', () => {
+  /*
+   * maxDuration da rota /api/worker é 60s: uma reserva travada por um
+   * processo morto nunca pode legitimamente durar mais que isso. O
+   * timeout precisa ser bem menor que o antigo valor de 15 minutos
+   * (3 ciclos de cron perdidos) para que a fila volte a andar rápido.
+   */
+  assert.equal(STALE_CLAIM_TIMEOUT_MINUTES, 5)
+  assert.ok(STALE_CLAIM_TIMEOUT_MINUTES <= 5)
+  assert.ok(STALE_CLAIM_TIMEOUT_MINUTES > 0)
+})
+
+test('pending com última execução queued/running (claim perdido) volta a ser candidata', () => {
+  /*
+   * Cobre o cenário real relatado: oportunidade que ficou queued/running
+   * na execution_runs mas cujo processo morreu sem persistir o estado
+   * final — precisa voltar a ser candidata assim que o claim expira.
+   */
+  assert.equal(shouldIncludeInCycle('pending', 'queued'), true)
+  assert.equal(shouldIncludeInCycle('pending', 'running'), true)
+  assert.equal(shouldIncludeInCycle('pending', 'failed'), true)
+  assert.equal(shouldIncludeInCycle('pending', 'blocked'), true)
+  assert.equal(shouldIncludeInCycle('pending', 'waiting_external'), true)
+})
+
+test('pending sem nenhuma execução anterior e pending já concluída/aguardando humano não voltam ao ciclo', () => {
+  assert.equal(shouldIncludeInCycle('pending', null), false)
+  assert.equal(shouldIncludeInCycle('pending', 'completed'), false)
+  assert.equal(shouldIncludeInCycle('pending', 'waiting_human'), false)
+})
+
+test('new e queued sempre entram no ciclo, independente da última execução', () => {
+  assert.equal(shouldIncludeInCycle('new'), true)
+  assert.equal(shouldIncludeInCycle('queued'), true)
+  assert.equal(shouldIncludeInCycle('queued', 'completed'), true)
 })
 
 test('reprocessa pendentes apenas quando a última execução foi retryável, sem reciclar waiting_human ou waiting_external', () => {

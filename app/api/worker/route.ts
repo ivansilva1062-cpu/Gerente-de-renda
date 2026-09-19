@@ -17,7 +17,8 @@ import { classifyExecutionAction } from '@/lib/execution-adapters'
 import { getExecutionRetryState, persistExecution } from '@/lib/execution-store'
 import { requestHasActiveSession } from '@/lib/auth-server'
 import { isAuthorizedWorkerRequest } from '@/lib/worker-auth'
-import { runWorkerCycle, shouldIncludeInCycle } from '@/lib/worker-cycle'
+import { runWorkerCycle, shouldIncludeInCycle, STALE_CLAIM_TIMEOUT_MINUTES } from '@/lib/worker-cycle'
+import { logWorkerEvent } from '@/lib/worker-log'
 import { upsertNotificationEvent } from '@/lib/notifications'
 import { getOperatorProfile } from '@/lib/operator-profile'
 import { getStoredOperatorProfile } from '@/lib/profile-store'
@@ -549,7 +550,7 @@ async function getCycleCandidates() {
         o.status IN ('new', 'queued', 'pending')
         OR (
           o.status = 'running'
-          AND o.worker_claimed_at < NOW() - INTERVAL '15 minutes'
+          AND o.worker_claimed_at < NOW() - (${STALE_CLAIM_TIMEOUT_MINUTES} * INTERVAL '1 minute')
         )
       )
       AND (le.next_attempt_at IS NULL OR le.next_attempt_at <= NOW())
@@ -581,7 +582,7 @@ async function getExcludedExecutionIds() {
           er.state IN ('waiting_human', 'completed')
           OR (
             o.status = 'running'
-            AND o.worker_claimed_at >= NOW() - INTERVAL '15 minutes'
+            AND o.worker_claimed_at >= NOW() - (${STALE_CLAIM_TIMEOUT_MINUTES} * INTERVAL '1 minute')
           )
         )
     `
@@ -600,13 +601,15 @@ async function claimOpportunity(opportunityId: string) {
         status IN ('new', 'queued', 'pending')
         OR (
           status = 'running'
-          AND worker_claimed_at < NOW() - INTERVAL '15 minutes'
+          AND worker_claimed_at < NOW() - (${STALE_CLAIM_TIMEOUT_MINUTES} * INTERVAL '1 minute')
         )
       )
     RETURNING id
   `
 
-  return rows.length > 0
+  const claimed = rows.length > 0
+  logWorkerEvent(claimed ? 'OPPORTUNITY_CLAIMED' : 'OPPORTUNITY_CLAIM_FAILED', { opportunityId })
+  return claimed
 }
 
 async function runContinuousCycle(startedAt: number = Date.now()) {
@@ -617,7 +620,7 @@ async function runContinuousCycle(startedAt: number = Date.now()) {
     UPDATE opportunities
     SET status = 'pending', worker_claimed_at = NULL
     WHERE status = 'running'
-      AND worker_claimed_at < NOW() - INTERVAL '15 minutes'
+      AND worker_claimed_at < NOW() - (${STALE_CLAIM_TIMEOUT_MINUTES} * INTERVAL '1 minute')
   `
 
   const rows = await getCycleCandidates()
@@ -644,8 +647,11 @@ async function runContinuousCycle(startedAt: number = Date.now()) {
     : Math.max(0, controlCenter.dailyActionLimit - actionsStartedToday)
 
   const eligibleCandidates = [] as typeof candidates
+  let blockedByCategory = 0
+  let blockedByManager = 0
   for (const candidate of candidates) {
     if (isCategoryBlocked(controlCenter, candidate.category)) {
+      blockedByCategory += 1
       await sql`
         UPDATE opportunities
         SET status = 'pending', manager_blocked = TRUE
@@ -656,6 +662,7 @@ async function runContinuousCycle(startedAt: number = Date.now()) {
 
     const plan = planManagerExecution(candidate)
     if (plan.execution.state === 'blocked') {
+      blockedByManager += 1
       await sql`
         UPDATE opportunities
         SET status = 'pending',
@@ -669,7 +676,19 @@ async function runContinuousCycle(startedAt: number = Date.now()) {
     eligibleCandidates.push(candidate)
   }
 
+  logWorkerEvent('CANDIDATES_FOUND', {
+    candidatesFound: candidates.length,
+    eligible: eligibleCandidates.length,
+    blockedByCategory,
+    blockedByManager,
+    excludedAlreadyInFlight: Array.from(excludedIds).length,
+    dailyActionLimit: controlCenter.dailyActionLimit,
+    actionsStartedToday,
+    remainingToday: Number.isFinite(remainingToday) ? remainingToday : null,
+  })
+
   if (remainingToday <= 0) {
+    logWorkerEvent('WORKER_FINISHED', { reason: 'daily_action_limit_reached', selected: 0 })
     return {
       selectedIds: [],
       results: [],
@@ -692,7 +711,12 @@ async function runContinuousCycle(startedAt: number = Date.now()) {
         }
       }
 
+      logWorkerEvent('EXECUTION_STARTED', { opportunityId: candidate.id })
       const result = await inspectOpportunity(candidate)
+      logWorkerEvent(result.state === 'failed' ? 'EXECUTION_FAILED' : 'EXECUTION_COMPLETED', {
+        opportunityId: candidate.id,
+        state: result.state,
+      })
       return {
         id: candidate.id,
         state: result.state,
@@ -704,11 +728,32 @@ async function runContinuousCycle(startedAt: number = Date.now()) {
     startedAt + CYCLE_TIME_BUDGET_MS,
   )
 
+  const resultsByState = cycle.results.reduce<Record<string, number>>((acc, item) => {
+    acc[item.state] = (acc[item.state] ?? 0) + 1
+    return acc
+  }, {})
+
+  logWorkerEvent('WORKER_FINISHED', {
+    selected: cycle.selectedIds.length,
+    durationMs: Date.now() - startedAt,
+    resultsByState,
+  })
+
   return {
     ...cycle,
     controlCenter: {
       dailyActionLimitReached: false,
       actionsStartedToday,
+    },
+    diagnostics: {
+      candidatesFound: candidates.length,
+      eligible: eligibleCandidates.length,
+      blockedByCategory,
+      blockedByManager,
+      excludedAlreadyInFlight: Array.from(excludedIds).length,
+      claimed: cycle.selectedIds.length,
+      resultsByState,
+      durationMs: Date.now() - startedAt,
     },
   }
 }
@@ -912,6 +957,7 @@ async function inspectOpportunity(
 
   execution = transitionExecution(execution, 'running')
   await persistExecution(execution)
+  logWorkerEvent('BROWSER_STARTED', { opportunityId: opportunity.id, sessionId: session.id })
 
   let browser:
     Awaited<
@@ -1004,6 +1050,8 @@ async function inspectOpportunity(
         0,
         12_000,
       )
+
+    logWorkerEvent('PAGE_INSPECTED', { opportunityId: opportunity.id, pageTitle })
 
     /*
      * ======================================
@@ -1127,6 +1175,7 @@ async function inspectOpportunity(
       : undefined
 
     if (requiresHuman) {
+      logWorkerEvent('WAITING_HUMAN', { opportunityId: opportunity.id })
       execution = transitionExecution(execution, 'waiting_human', {
         intervention: {
           required: true,
@@ -1136,10 +1185,12 @@ async function inspectOpportunity(
         },
       })
     } else if (submissionConfirmed && awaitingExternalReview) {
+      logWorkerEvent('WAITING_EXTERNAL', { opportunityId: opportunity.id })
       execution = transitionExecution(execution, 'waiting_external', {
         evidence: `Formulário preenchido e enviado automaticamente com os dados já autorizados. A plataforma agora está processando a etapa: ${pageTitle}`,
       })
     } else if (submissionConfirmed) {
+      logWorkerEvent('ACTION_CONFIRMED', { opportunityId: opportunity.id })
       execution = finalizeBrowserAction(
         execution,
         true,
@@ -1340,6 +1391,7 @@ async function inspectOpportunity(
 export async function GET(
   request: Request,
 ) {
+  logWorkerEvent('WORKER_START')
   const sessionActive = await requestHasActiveSession()
   const cronSecret = process.env.CRON_SECRET
   const authorized = isAuthorizedWorkerRequest({
@@ -1349,8 +1401,14 @@ export async function GET(
   })
 
   if (!authorized) {
+    logWorkerEvent('WORKER_UNAUTHORIZED', {
+      hasCronSecretConfigured: Boolean(cronSecret),
+      hasAuthorizationHeader: Boolean(request.headers.get('authorization')),
+      sessionActive,
+    })
     return NextResponse.json({ success: false, error: 'Autenticação necessária.' }, { status: 401 })
   }
+  logWorkerEvent('WORKER_AUTHORIZED', { via: sessionActive ? 'session' : 'cron_secret' })
   try {
     /*
      * ======================================
@@ -1373,15 +1431,38 @@ export async function GET(
      *
      * Sem oportunidade específica:
      * somente executa a descoberta.
+     *
+     * IMPORTANTE: uma falha do radar (ex.: erro externo na API de
+     * busca) NUNCA pode impedir o processamento da fila que já
+     * existe no banco — antes, uma exceção aqui interrompia a rota
+     * inteira antes de chamar runContinuousCycle, deixando centenas
+     * de oportunidades já `queued`/`pending` sem serem processadas
+     * só porque o radar (descoberta de NOVAS oportunidades) falhou.
      */
 
     if (!opportunityId) {
       const cycleStartedAt = Date.now()
-      const radar =
-        await runDiscovery(
-          request,
-        )
+      logWorkerEvent('RADAR_STARTED')
+      let radar: unknown
+      try {
+        radar = await runDiscovery(request)
+        logWorkerEvent('RADAR_FINISHED')
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'O radar não conseguiu executar.'
+        logWorkerEvent('RADAR_FAILED', { error: detail })
+        radar = { success: false, error: detail }
+      }
       const cycle = await runContinuousCycle(cycleStartedAt)
+
+      /*
+       * Diagnóstico seguro: só booleanos de presença de configuração
+       * e contagens — nunca o valor de nenhuma variável de ambiente.
+       */
+      const config = {
+        cronSecretConfigured: Boolean(process.env.CRON_SECRET),
+        databaseConfigured: Boolean(process.env.DATABASE_URL),
+        browserbaseApiKeyConfigured: Boolean(process.env.BROWSERBASE_API_KEY),
+      }
 
       return NextResponse.json({
         success: true,
@@ -1410,6 +1491,7 @@ export async function GET(
 
         radar,
         cycle,
+        config,
       })
     }
 
