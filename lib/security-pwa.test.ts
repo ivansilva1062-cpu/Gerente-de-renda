@@ -87,7 +87,7 @@ test('métricas reais nunca somam estimativa como ganho confirmado', async () =>
 
   assert.match(metrics, /requestHasActiveSession\(\)/)
   assert.match(store, /FROM earnings/)
-  assert.doesNotMatch(store, /confirmedValue[\s\S]*estimated_value/i)
+  assert.match(store, /const confirmedValue = Number\(earnings\[0\]\?\.total \?\? 0\)/)
   assert.match(store, /const costs = 0/)
   assert.match(store, /netProfit = confirmedValue - costs/)
 })
@@ -96,4 +96,15 @@ test('Worker aumenta maxDuration e evita "indisponível" por timeout curto', asy
   const worker = await read('app/api/worker/route.ts')
   assert.match(worker, /export const maxDuration = 60/)
   assert.match(worker, /CYCLE_TIME_BUDGET_MS/)
+})
+
+test('Central de Controle protege o endpoint e o Worker nunca ultrapassa os limites', async () => {
+  const controlCenterRoute = await read('app/api/control-center/route.ts')
+  const worker = await read('app/api/worker/route.ts')
+
+  assert.match(controlCenterRoute, /requestHasActiveSession\(\)/)
+  assert.match(worker, /isCategoryBlocked\(/)
+  assert.match(worker, /requiresManualApproval\(/)
+  assert.match(worker, /countActionsStartedLast24h\(/)
+  assert.match(worker, /Math\.min\(12, remainingToday\)/)
 })

@@ -40,9 +40,22 @@ type Metrics = {
   pendingIntegration: number
   confirmedEarnings: number
   confirmedValue: number
+  estimatedRevenue: number
+  pendingRevenue: number
   costs: number
   netProfit: number
   conversionRate: number
+}
+
+type PortfolioEntry = {
+  source: string
+  opportunities: number
+  actions: number
+  completed: number
+  failed: number
+  confirmedEarnings: number
+  confirmedValue: number
+  successRate: number
 }
 
 const stateVariant: Record<string, 'success' | 'warning' | 'destructive' | 'neutral'> = {
@@ -67,6 +80,7 @@ function displayState(row: ExecutionHistoryRow) {
 export default function DiagnosticoPage() {
   const [history, setHistory] = useState<ExecutionHistoryRow[]>([])
   const [metrics, setMetrics] = useState<Metrics | null>(null)
+  const [portfolio, setPortfolio] = useState<PortfolioEntry[]>([])
   const [loading, setLoading] = useState(false)
 
   const refresh = useCallback(async () => {
@@ -83,8 +97,9 @@ export default function DiagnosticoPage() {
       }
 
       if (metricsResponse.ok) {
-        const data = await metricsResponse.json() as { metrics?: Metrics }
+        const data = await metricsResponse.json() as { metrics?: Metrics; portfolio?: PortfolioEntry[] }
         setMetrics(data.metrics ?? null)
+        setPortfolio(Array.isArray(data.portfolio) ? data.portfolio : [])
       }
     } catch (error) {
       console.error('Erro ao carregar diagnóstico:', error)
@@ -133,6 +148,47 @@ export default function DiagnosticoPage() {
           <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Lucro líquido</p><p className="font-mono text-xl font-semibold text-success">{usd(metrics.netProfit)}</p></CardContent></Card>
           <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Taxa de conversão</p><p className="font-mono text-xl font-semibold">{(metrics.conversionRate * 100).toFixed(1)}%</p></CardContent></Card>
         </div>
+      )}
+
+      {metrics && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Financeiro real</CardTitle>
+          </CardHeader>
+          <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div>
+              <p className="text-xs text-muted-foreground">Receita estimada (em aberto, não é dinheiro)</p>
+              <p className="font-mono text-xl font-semibold">{usd(metrics.estimatedRevenue)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Receita pendente (concluída, aguardando confirmação)</p>
+              <p className="font-mono text-xl font-semibold text-warning-foreground">{usd(metrics.pendingRevenue)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Receita confirmada (única que entra no saldo)</p>
+              <p className="font-mono text-xl font-semibold text-success">{usd(metrics.confirmedValue)}</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {portfolio.length > 0 && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle>Portfólio por fonte</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {portfolio.map((entry) => (
+              <div key={entry.source} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border p-3 text-sm">
+                <p className="font-medium">{entry.source}</p>
+                <p className="text-xs text-muted-foreground">
+                  {entry.opportunities} oportunidades • {entry.actions} ações • {entry.completed} concluídas • {entry.failed} falhas • {(entry.successRate * 100).toFixed(1)}% sucesso
+                </p>
+                <p className="font-mono text-sm font-semibold text-success">{usd(entry.confirmedValue)}</p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
       )}
 
       <Card>

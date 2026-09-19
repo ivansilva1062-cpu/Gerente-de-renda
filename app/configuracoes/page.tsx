@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Bot,
   Globe,
@@ -9,6 +9,7 @@ import {
   MessageCircle,
   KeyRound,
   Target,
+  ShieldAlert,
   type LucideIcon,
 } from 'lucide-react'
 import { useAgent } from '@/components/agent-provider'
@@ -18,6 +19,8 @@ import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { usd } from '@/lib/format'
+import { categoryLabel } from '@/lib/labels'
+import { OPPORTUNITY_CATEGORIES, type OpportunityCategory } from '@/lib/opportunity-catalog'
 
 const integrationIcons: Record<string, LucideIcon> = {
   'ai-agent': Bot,
@@ -34,6 +37,63 @@ export default function SettingsPage() {
   const [notifyPending, setNotifyPending] = useState(true)
   const [notifyEarnings, setNotifyEarnings] = useState(false)
   const [keepWorking, setKeepWorking] = useState(true)
+
+  /*
+   * Central de Controle: limites reais, persistidos no banco e
+   * aplicados pelo Worker (ver lib/control-center.ts). Diferente da
+   * "meta diária" acima, que é só um indicador visual.
+   */
+  const [dailyActionLimit, setDailyActionLimit] = useState<string>('')
+  const [requiresApprovalAboveUsd, setRequiresApprovalAboveUsd] = useState<string>('')
+  const [blockedCategories, setBlockedCategories] = useState<OpportunityCategory[]>([])
+  const [controlLoading, setControlLoading] = useState(true)
+  const [controlSaving, setControlSaving] = useState(false)
+  const [controlSavedAt, setControlSavedAt] = useState<string | null>(null)
+
+  useEffect(() => {
+    let active = true
+    fetch('/api/control-center', { cache: 'no-store' })
+      .then((response) => response.json())
+      .then((data: { success?: boolean; settings?: { dailyActionLimit: number | null; blockedCategories: string[]; requiresApprovalAboveUsd: number | null } }) => {
+        if (!active || !data.success || !data.settings) return
+        setDailyActionLimit(data.settings.dailyActionLimit != null ? String(data.settings.dailyActionLimit) : '')
+        setRequiresApprovalAboveUsd(data.settings.requiresApprovalAboveUsd != null ? String(data.settings.requiresApprovalAboveUsd) : '')
+        setBlockedCategories(data.settings.blockedCategories as OpportunityCategory[])
+      })
+      .catch((error) => console.error('Erro ao carregar a Central de Controle:', error))
+      .finally(() => {
+        if (active) setControlLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const toggleBlockedCategory = (category: OpportunityCategory) => {
+    setBlockedCategories((previous) =>
+      previous.includes(category) ? previous.filter((item) => item !== category) : [...previous, category],
+    )
+  }
+
+  const saveControlCenter = async () => {
+    setControlSaving(true)
+    try {
+      const response = await fetch('/api/control-center', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dailyActionLimit: dailyActionLimit.trim() === '' ? null : Number(dailyActionLimit),
+          requiresApprovalAboveUsd: requiresApprovalAboveUsd.trim() === '' ? null : Number(requiresApprovalAboveUsd),
+          blockedCategories,
+        }),
+      })
+      if (response.ok) setControlSavedAt(new Date().toISOString())
+    } catch (error) {
+      console.error('Erro ao salvar a Central de Controle:', error)
+    } finally {
+      setControlSaving(false)
+    }
+  }
 
   return (
     <div>
@@ -153,6 +213,82 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ShieldAlert className="size-4" />
+            Central de Controle
+          </CardTitle>
+          <CardDescription>
+            Limites reais aplicados pelo Worker antes de qualquer ação nova — nunca são ultrapassados.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <label className="space-y-1 text-sm">
+              <span className="font-medium">Limite diário de ações autônomas</span>
+              <input
+                type="number"
+                min={0}
+                placeholder="Sem limite"
+                value={dailyActionLimit}
+                onChange={(event) => setDailyActionLimit(event.target.value)}
+                className="w-full rounded-md border border-border bg-background p-2 font-mono"
+                disabled={controlLoading}
+              />
+              <span className="block text-xs text-muted-foreground">
+                Quantas ações o ciclo automático (cron) pode iniciar nas últimas 24h. Vazio = sem limite.
+              </span>
+            </label>
+            <label className="space-y-1 text-sm">
+              <span className="font-medium">Exigir minha aprovação acima de (USD)</span>
+              <input
+                type="number"
+                min={0}
+                placeholder="Sem limite"
+                value={requiresApprovalAboveUsd}
+                onChange={(event) => setRequiresApprovalAboveUsd(event.target.value)}
+                className="w-full rounded-md border border-border bg-background p-2 font-mono"
+                disabled={controlLoading}
+              />
+              <span className="block text-xs text-muted-foreground">
+                Oportunidades com valor estimado acima disso sempre param aguardando sua autorização.
+              </span>
+            </label>
+          </div>
+
+          <div>
+            <p className="mb-2 text-sm font-medium">Categorias bloqueadas</p>
+            <div className="flex flex-wrap gap-2">
+              {OPPORTUNITY_CATEGORIES.map((category) => (
+                <button
+                  key={category}
+                  type="button"
+                  onClick={() => toggleBlockedCategory(category)}
+                  disabled={controlLoading}
+                >
+                  <Badge variant={blockedCategories.includes(category) ? 'destructive' : 'neutral'}>
+                    {categoryLabel[category]}
+                  </Badge>
+                </button>
+              ))}
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              O Worker nunca inicia ações nas categorias marcadas em vermelho.
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Button size="sm" onClick={() => void saveControlCenter()} disabled={controlLoading || controlSaving}>
+              {controlSaving ? 'Salvando…' : 'Salvar limites'}
+            </Button>
+            {controlSavedAt && (
+              <span className="text-xs text-muted-foreground">Salvo às {new Date(controlSavedAt).toLocaleTimeString('pt-BR')}</span>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       <div className="mt-6 flex justify-end">
         <Button disabled>Salvar preferências (em breve)</Button>

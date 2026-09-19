@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { requestHasActiveSession } from '@/lib/auth-server'
-import { getExecutionMetrics } from '@/lib/execution-store'
+import { getExecutionMetrics, getSourcePortfolio } from '@/lib/execution-store'
 
 /*
  * ==========================================
@@ -16,10 +16,11 @@ export async function GET() {
     return NextResponse.json({ success: false, error: 'Autenticação necessária.' }, { status: 401 })
   }
   try {
-    const metrics = await getExecutionMetrics()
-    return NextResponse.json({ success: true, metrics })
+    const [metrics, portfolio] = await Promise.all([getExecutionMetrics(), getSourcePortfolio()])
+    return NextResponse.json({ success: true, metrics, portfolio })
   } catch (error) {
     console.error('Erro ao calcular métricas:', error)
     return NextResponse.json({ success: false, error: 'Não foi possível calcular métricas.' }, { status: 500 })
   }
 }
+

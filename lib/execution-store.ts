@@ -208,7 +208,7 @@ export async function getExecutionHistory(limit = 100) {
  * `confirmedEarnings` v\u00eam exclusivamente da tabela earnings.
  */
 export async function getExecutionMetrics() {
-  const [discovered, qualified, executed, byState, retrying, pendingIntegration, earnings] = await Promise.all([
+  const [discovered, qualified, executed, byState, retrying, pendingIntegration, earnings, openValue, pendingValue] = await Promise.all([
     sql`SELECT COUNT(*)::int AS count FROM opportunities`,
     // Qualificada = já avaliada pelo Avaliador/Risco e não bloqueada pelo Gerente.
     sql`SELECT COUNT(*)::int AS count FROM opportunities WHERE manager_blocked = FALSE AND manager_score > 0`,
@@ -223,6 +223,10 @@ export async function getExecutionMetrics() {
     // Dependem de integração de API oficial ainda não autorizada (ver AUTHORIZED_API_INTEGRATIONS).
     sql`SELECT COUNT(*)::int AS count FROM execution_runs WHERE integration_available = FALSE`,
     sql`SELECT COUNT(*)::int AS count, COALESCE(SUM(amount), 0) AS total FROM earnings`,
+    // Receita estimada = ainda na fila/monitoramento, nunca concluída.
+    sql`SELECT COALESCE(SUM(estimated_value), 0) AS total FROM opportunities WHERE status != 'done'`,
+    // Receita pendente = ação já concluída pelo Worker, mas ainda sem confirmação em /api/earnings.
+    sql`SELECT COALESCE(SUM(estimated_value), 0) AS total FROM opportunities WHERE status = 'done'`,
   ])
 
   const stateCounts = Object.fromEntries(
@@ -249,6 +253,13 @@ export async function getExecutionMetrics() {
    */
   const costs = 0
   const netProfit = confirmedValue - costs
+  /*
+   * Três números financeiros separados (nunca somados ao saldo real):
+   * estimada = ainda em aberto; pendente = ação concluída aguardando
+   * confirmação; confirmada = já registrada em /api/earnings.
+   */
+  const estimatedRevenue = Number((openValue[0] as { total?: number } | undefined)?.total ?? 0)
+  const pendingRevenue = Number((pendingValue[0] as { total?: number } | undefined)?.total ?? 0)
 
   return {
     discovered: Number(discovered[0]?.count ?? 0),
@@ -263,8 +274,74 @@ export async function getExecutionMetrics() {
     pendingIntegration: Number(pendingIntegration[0]?.count ?? 0),
     confirmedEarnings: confirmedCount,
     confirmedValue,
+    estimatedRevenue,
+    pendingRevenue,
     costs,
     netProfit,
     conversionRate: executedCount > 0 ? Number((confirmedCount / executedCount).toFixed(4)) : 0,
   }
+}
+
+/*
+ * ==========================================
+ * PORTFÓLIO POR FONTE
+ * ==========================================
+ *
+ * Cada fonte de renda (source do Radar) recebe suas próprias
+ * métricas reais, para o Gerente priorizar o que realmente converte
+ * e não apenas o que tem mais volume de oportunidades.
+ */
+export type SourcePortfolioEntry = {
+  source: string
+  opportunities: number
+  actions: number
+  completed: number
+  failed: number
+  confirmedEarnings: number
+  confirmedValue: number
+  successRate: number
+}
+
+export async function getSourcePortfolio(): Promise<SourcePortfolioEntry[]> {
+  const [actionsBySource, earningsBySource] = await Promise.all([
+    sql`
+      SELECT
+        o.source,
+        COUNT(DISTINCT o.id)::int AS opportunities,
+        COUNT(er.id)::int AS actions,
+        COUNT(er.id) FILTER (WHERE er.state = 'completed')::int AS completed,
+        COUNT(er.id) FILTER (WHERE er.state = 'failed')::int AS failed
+      FROM opportunities o
+      LEFT JOIN execution_runs er ON er.opportunity_id = o.id
+      GROUP BY o.source
+    `,
+    sql`
+      SELECT source, COUNT(*)::int AS count, COALESCE(SUM(amount), 0) AS total
+      FROM earnings
+      GROUP BY source
+    `,
+  ])
+
+  const earningsMap = new Map(
+    (earningsBySource as Array<{ source: string; count: number; total: number }>).map((row) => [
+      row.source,
+      { count: Number(row.count), total: Number(row.total) },
+    ]),
+  )
+
+  return (actionsBySource as Array<{ source: string; opportunities: number; actions: number; completed: number; failed: number }>)
+    .map((row) => {
+      const earning = earningsMap.get(row.source) ?? { count: 0, total: 0 }
+      return {
+        source: row.source,
+        opportunities: row.opportunities,
+        actions: row.actions,
+        completed: row.completed,
+        failed: row.failed,
+        confirmedEarnings: earning.count,
+        confirmedValue: earning.total,
+        successRate: row.actions > 0 ? Number((row.completed / row.actions).toFixed(4)) : 0,
+      }
+    })
+    .sort((left, right) => right.confirmedValue - left.confirmedValue)
 }

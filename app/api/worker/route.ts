@@ -21,6 +21,12 @@ import { runWorkerCycle, shouldIncludeInCycle } from '@/lib/worker-cycle'
 import { upsertNotificationEvent } from '@/lib/notifications'
 import { getOperatorProfile } from '@/lib/operator-profile'
 import { getStoredOperatorProfile } from '@/lib/profile-store'
+import {
+  countActionsStartedLast24h,
+  getControlCenterSettings,
+  isCategoryBlocked,
+  requiresManualApproval,
+} from '@/lib/control-center'
 
 /*
  * ==========================================
@@ -626,8 +632,28 @@ async function runContinuousCycle(startedAt: number = Date.now()) {
     managerScore: 0,
   }))
 
+  /*
+   * Central de Controle: categoria bloqueada nunca entra na fila e
+   * o ciclo autônomo nunca inicia mais ações do que o limite diário
+   * definido pelo operador (ver lib/control-center.ts).
+   */
+  const controlCenter = await getControlCenterSettings()
+  const actionsStartedToday = await countActionsStartedLast24h()
+  const remainingToday = controlCenter.dailyActionLimit == null
+    ? Infinity
+    : Math.max(0, controlCenter.dailyActionLimit - actionsStartedToday)
+
   const eligibleCandidates = [] as typeof candidates
   for (const candidate of candidates) {
+    if (isCategoryBlocked(controlCenter, candidate.category)) {
+      await sql`
+        UPDATE opportunities
+        SET status = 'pending', manager_blocked = TRUE
+        WHERE id = ${candidate.id}
+      `
+      continue
+    }
+
     const plan = planManagerExecution(candidate)
     if (plan.execution.state === 'blocked') {
       await sql`
@@ -643,7 +669,18 @@ async function runContinuousCycle(startedAt: number = Date.now()) {
     eligibleCandidates.push(candidate)
   }
 
-  return runWorkerCycle(
+  if (remainingToday <= 0) {
+    return {
+      selectedIds: [],
+      results: [],
+      controlCenter: {
+        dailyActionLimitReached: true,
+        actionsStartedToday,
+      },
+    }
+  }
+
+  const cycle = await runWorkerCycle(
     eligibleCandidates,
     excludedIds,
     async (candidate) => {
@@ -663,9 +700,17 @@ async function runContinuousCycle(startedAt: number = Date.now()) {
       }
     },
     3,
-    12,
+    Math.min(12, remainingToday),
     startedAt + CYCLE_TIME_BUDGET_MS,
   )
+
+  return {
+    ...cycle,
+    controlCenter: {
+      dailyActionLimitReached: false,
+      actionsStartedToday,
+    },
+  }
 }
 
 /*
@@ -733,6 +778,25 @@ async function inspectOpportunity(
     url: opportunity.url ?? undefined,
   })
   let execution = { ...plan.execution, actionType, integrationAvailable, pendingIntegrationNote }
+
+  /*
+   * Central de Controle: valor acima do limite de aprovação manual
+   * sempre para em WAITING_USER, mesmo que todos os módulos do
+   * Gerente tenham aprovado a oportunidade.
+   */
+  if (execution.state === 'queued') {
+    const controlCenter = await getControlCenterSettings()
+    if (requiresManualApproval(controlCenter, executionOpportunity.estimatedValue)) {
+      execution = transitionExecution(execution, 'waiting_human', {
+        intervention: {
+          required: true,
+          reason: `Valor estimado (${executionOpportunity.estimatedValue}) acima do limite de aprovação automática definido na Central de Controle (${controlCenter.requiresApprovalAboveUsd}).`,
+          action: 'Revise e autorize manualmente na Central de Controle para o Worker prosseguir.',
+          url: opportunity.url ?? undefined,
+        },
+      })
+    }
+  }
 
   await persistExecution(execution)
 
