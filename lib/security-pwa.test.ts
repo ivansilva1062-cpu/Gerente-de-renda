@@ -80,3 +80,20 @@ test('mantém acesso protegido no middleware e nas APIs privadas', async () => {
   assert.match(middleware, /pathname === '\/api\/discover'/)
   assert.doesNotMatch(manager, /fallbackCandidate/)
 })
+
+test('métricas reais nunca somam estimativa como ganho confirmado', async () => {
+  const metrics = await read('app/api/metrics/route.ts')
+  const store = await read('lib/execution-store.ts')
+
+  assert.match(metrics, /requestHasActiveSession\(\)/)
+  assert.match(store, /FROM earnings/)
+  assert.doesNotMatch(store, /confirmedValue[\s\S]*estimated_value/i)
+  assert.match(store, /const costs = 0/)
+  assert.match(store, /netProfit = confirmedValue - costs/)
+})
+
+test('Worker aumenta maxDuration e evita "indisponível" por timeout curto', async () => {
+  const worker = await read('app/api/worker/route.ts')
+  assert.match(worker, /export const maxDuration = 60/)
+  assert.match(worker, /CYCLE_TIME_BUDGET_MS/)
+})

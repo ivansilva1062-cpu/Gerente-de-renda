@@ -91,6 +91,22 @@ test('isola falha de uma oportunidade e continua processando as demais', async (
   assert.equal(result.results[1]?.state, 'completed')
 })
 
+test('mantém oportunidade pendente quando o Worker está indisponível e continua a fila', async () => {
+  const result = await runWorkerCycle(
+    [candidate('unavailable', { managerScore: 100 }), candidate('available')],
+    [],
+    async (item) => {
+      if (item.id === 'unavailable') throw new Error('Browserbase indisponível')
+      return { id: item.id, state: 'completed' as const }
+    },
+    2,
+  )
+
+  assert.equal(result.results[0]?.state, 'failed')
+  assert.match(result.results[0]?.error ?? '', /Browserbase indisponível/)
+  assert.equal(result.results[1]?.state, 'completed')
+})
+
 test('processa candidatos em paralelo e limita a retentativa a uma tentativa extra', async () => {
     const attempts = new Map<string, number>()
     let active = 0

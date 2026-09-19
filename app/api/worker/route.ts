@@ -7,6 +7,7 @@ import { executionNextStep, planManagerExecution } from '@/lib/manager-execution
 import { decideManagerAction } from '@/lib/manager-decision'
 import {
   classifyExecutionState,
+  finalizeBrowserAction,
   isSensitiveAction,
   scheduleRetry,
   sensitiveActionReason,
@@ -47,6 +48,31 @@ import { getStoredOperatorProfile } from '@/lib/profile-store'
  * O dinheiro verdadeiro continua exclusivamente
  * em /api/earnings.
  */
+
+/*
+ * ==========================================
+ * DURAÇÃO MÁXIMA DA FUNÇÃO (Vercel)
+ * ==========================================
+ *
+ * Sem isso, a rota usava o timeout padrão da plataforma (10-15s),
+ * muito menor que o tempo real de abrir sessão no Browserbase e
+ * navegar numa página (pode passar de 30-40s por oportunidade).
+ * A função era encerrada pela Vercel no meio da execução — o
+ * cliente/cron nunca recebia resposta e o Worker aparecia como
+ * "indisponível" mesmo estando com o código correto.
+ */
+export const maxDuration = 60
+export const dynamic = 'force-dynamic'
+
+/*
+ * Orçamento de tempo (ms) para o ciclo contínuo do Worker, com
+ * margem de segurança abaixo de `maxDuration`. Ao atingir o limite,
+ * o ciclo para de iniciar novas oportunidades (não simula, não
+ * finaliza nada) e devolve o que já foi processado de verdade; as
+ * demais permanecem no status anterior e voltam a ser candidatas no
+ * próximo disparo do cron, 5 minutos depois.
+ */
+const CYCLE_TIME_BUDGET_MS = 45_000
 
 type OpportunityRow = {
   id: string
@@ -219,29 +245,47 @@ async function trySubmitAuthorizedForm(page: EvaluablePage) {
   })
 }
 
+/*
+ * Cacheada por instância (warm lambda): rodar estes 4 ALTER TABLE a
+ * cada requisição — inclusive em cada candidato de um ciclo com até
+ * 12 oportunidades — somava dezenas de round-trips HTTP ao banco
+ * desnecessários e era uma das causas reais do Worker estourar o
+ * tempo de execução na Vercel.
+ */
+let managerColumnsReady: Promise<void> | null = null
+
 async function ensureManagerColumns() {
-  await sql`
-    ALTER TABLE opportunities
-    ADD COLUMN IF NOT EXISTS manager_score INTEGER
-    NOT NULL DEFAULT 0
-  `
+  if (!managerColumnsReady) {
+    managerColumnsReady = (async () => {
+      await sql`
+        ALTER TABLE opportunities
+        ADD COLUMN IF NOT EXISTS manager_score INTEGER
+        NOT NULL DEFAULT 0
+      `
 
-  await sql`
-    ALTER TABLE opportunities
-    ADD COLUMN IF NOT EXISTS manager_priority TEXT
-    NOT NULL DEFAULT 'low'
-  `
+      await sql`
+        ALTER TABLE opportunities
+        ADD COLUMN IF NOT EXISTS manager_priority TEXT
+        NOT NULL DEFAULT 'low'
+      `
 
-  await sql`
-    ALTER TABLE opportunities
-    ADD COLUMN IF NOT EXISTS manager_blocked BOOLEAN
-    NOT NULL DEFAULT FALSE
-  `
+      await sql`
+        ALTER TABLE opportunities
+        ADD COLUMN IF NOT EXISTS manager_blocked BOOLEAN
+        NOT NULL DEFAULT FALSE
+      `
 
-  await sql`
-    ALTER TABLE opportunities
-    ADD COLUMN IF NOT EXISTS worker_claimed_at TIMESTAMPTZ
-  `
+      await sql`
+        ALTER TABLE opportunities
+        ADD COLUMN IF NOT EXISTS worker_claimed_at TIMESTAMPTZ
+      `
+    })().catch((error) => {
+      managerColumnsReady = null
+      throw error
+    })
+  }
+
+  return managerColumnsReady
 }
 
 /*
@@ -559,7 +603,7 @@ async function claimOpportunity(opportunityId: string) {
   return rows.length > 0
 }
 
-async function runContinuousCycle() {
+async function runContinuousCycle(startedAt: number = Date.now()) {
   await ensureManagerColumns()
 
   // Um processo interrompido não pode deixar uma reserva permanente.
@@ -619,6 +663,8 @@ async function runContinuousCycle() {
       }
     },
     3,
+    12,
+    startedAt + CYCLE_TIME_BUDGET_MS,
   )
 }
 
@@ -993,8 +1039,11 @@ async function inspectOpportunity(
       ? normalizeText(await page.locator('body').innerText({ timeout: 10_000 }).catch(() => cleanedText)).slice(0, 12_000)
       : cleanedText
 
+    const submissionConfirmed =
+      autoSubmitted && (page.url() !== opportunity.url || postSubmitText !== cleanedText)
+
     const awaitingExternalReview =
-      autoSubmitted && findSignals(postSubmitText, EXTERNAL_WAIT_SIGNALS).length > 0
+      submissionConfirmed && findSignals(postSubmitText, EXTERNAL_WAIT_SIGNALS).length > 0
 
     const finalManagerDecision = decideManagerAction(
       assessment.modules,
@@ -1022,18 +1071,22 @@ async function inspectOpportunity(
           url: page.url(),
         },
       })
-    } else if (autoSubmitted && awaitingExternalReview) {
+    } else if (submissionConfirmed && awaitingExternalReview) {
       execution = transitionExecution(execution, 'waiting_external', {
         evidence: `Formulário preenchido e enviado automaticamente com os dados já autorizados. A plataforma agora está processando a etapa: ${pageTitle}`,
       })
-    } else if (autoSubmitted) {
-      execution = transitionExecution(execution, 'completed', {
-        evidence: `Formulário preenchido e enviado automaticamente com os dados já autorizados: ${pageTitle}`,
-      })
+    } else if (submissionConfirmed) {
+      execution = finalizeBrowserAction(
+        execution,
+        true,
+        `Formulário preenchido e enviado automaticamente com os dados já autorizados: ${pageTitle}`,
+      )
     } else {
-      execution = transitionExecution(execution, 'completed', {
-        evidence: `Página oficial acessada e preparada sem autenticação, envio de dados ou confirmação financeira: ${pageTitle}`,
-      })
+      execution = finalizeBrowserAction(
+        execution,
+        false,
+        `Página oficial acessada, mas nenhuma ação externa foi executada: ${pageTitle}`,
+      )
     }
 
     if (requiresHuman) {
@@ -1070,7 +1123,7 @@ async function inspectOpportunity(
       })
     }
 
-    if (!requiresHuman && opportunity.url && opportunity.estimated_value) {
+    if (execution.state === 'completed' && opportunity.url && opportunity.estimated_value) {
       await upsertNotificationEvent({
         kind: 'opportunity_ready',
         ref: `opportunity-ready:${opportunity.id}`,
@@ -1088,6 +1141,7 @@ async function inspectOpportunity(
     await sql`
       UPDATE opportunities
       SET status = ${execution.state === 'completed' ? 'done' : 'pending'}
+        , manager_blocked = ${execution.state === 'blocked'}
         , worker_claimed_at = NULL
       WHERE id = ${opportunity.id}
     `
@@ -1136,7 +1190,7 @@ async function inspectOpportunity(
 
         paymentSignals,
 
-        autoSubmitted,
+        autoSubmitted: submissionConfirmed,
 
         awaitingExternalReview,
       },
@@ -1258,11 +1312,12 @@ export async function GET(
      */
 
     if (!opportunityId) {
+      const cycleStartedAt = Date.now()
       const radar =
         await runDiscovery(
           request,
         )
-      const cycle = await runContinuousCycle()
+      const cycle = await runContinuousCycle(cycleStartedAt)
 
       return NextResponse.json({
         success: true,

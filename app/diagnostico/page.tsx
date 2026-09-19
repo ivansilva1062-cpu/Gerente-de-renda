@@ -22,16 +22,23 @@ type ExecutionHistoryRow = {
   intervention: { reason?: string } | null
   started_at: string
   finished_at: string
+  next_attempt_at: string | null
 }
 
 type Metrics = {
   discovered: number
+  qualified: number
+  prepared: number
   executed: number
   actionsCompleted: number
   waitingUser: number
+  retrying: number
   failures: number
+  blocked: number
   confirmedEarnings: number
   confirmedValue: number
+  costs: number
+  netProfit: number
   conversionRate: number
 }
 
@@ -43,6 +50,15 @@ const stateVariant: Record<string, 'success' | 'warning' | 'destructive' | 'neut
   waiting_external: 'warning',
   blocked: 'destructive',
   failed: 'destructive',
+  retrying: 'warning',
+}
+
+// 'retrying' não é um estado do banco: é 'failed' com próxima tentativa agendada.
+function displayState(row: ExecutionHistoryRow) {
+  if (row.state === 'failed' && row.next_attempt_at && new Date(row.next_attempt_at) > new Date()) {
+    return 'retrying'
+  }
+  return row.state
 }
 
 export default function DiagnosticoPage() {
@@ -100,13 +116,18 @@ export default function DiagnosticoPage() {
       {metrics && (
         <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
           <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Descobertas</p><p className="font-mono text-xl font-semibold">{metrics.discovered}</p></CardContent></Card>
+          <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Qualificadas</p><p className="font-mono text-xl font-semibold">{metrics.qualified}</p></CardContent></Card>
+          <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Ações preparadas</p><p className="font-mono text-xl font-semibold">{metrics.prepared}</p></CardContent></Card>
           <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Executadas</p><p className="font-mono text-xl font-semibold">{metrics.executed}</p></CardContent></Card>
           <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Ações concluídas</p><p className="font-mono text-xl font-semibold">{metrics.actionsCompleted}</p></CardContent></Card>
           <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Aguardando você</p><p className="font-mono text-xl font-semibold">{metrics.waitingUser}</p></CardContent></Card>
+          <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Retentando</p><p className="font-mono text-xl font-semibold">{metrics.retrying}</p></CardContent></Card>
           <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Falhas</p><p className="font-mono text-xl font-semibold">{metrics.failures}</p></CardContent></Card>
           <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Ganhos confirmados</p><p className="font-mono text-xl font-semibold text-success">{metrics.confirmedEarnings}</p></CardContent></Card>
-          <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Taxa de conversão</p><p className="font-mono text-xl font-semibold">{(metrics.conversionRate * 100).toFixed(1)}%</p></CardContent></Card>
           <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Valor confirmado</p><p className="font-mono text-xl font-semibold text-success">{usd(metrics.confirmedValue)}</p></CardContent></Card>
+          <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Custos</p><p className="font-mono text-xl font-semibold">{usd(metrics.costs)}</p></CardContent></Card>
+          <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Lucro líquido</p><p className="font-mono text-xl font-semibold text-success">{usd(metrics.netProfit)}</p></CardContent></Card>
+          <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">Taxa de conversão</p><p className="font-mono text-xl font-semibold">{(metrics.conversionRate * 100).toFixed(1)}%</p></CardContent></Card>
         </div>
       )}
 
@@ -125,7 +146,7 @@ export default function DiagnosticoPage() {
               <div key={row.execution_id} className="rounded-lg border border-border p-3 text-sm">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="font-medium">{row.title ?? row.opportunity_id ?? row.execution_id}</p>
-                  <Badge variant={stateVariant[row.state] ?? 'neutral'}>{row.state}</Badge>
+                  <Badge variant={stateVariant[displayState(row)] ?? 'neutral'}>{displayState(row)}</Badge>
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {row.source ?? '—'} • ação: {row.action} {row.action_type ? `(${row.action_type})` : ''} • tentativa {row.attempt}

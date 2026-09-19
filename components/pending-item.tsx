@@ -132,7 +132,7 @@ export function PendingItem({
           }
         >
           <CheckCircle2 />
-          Ação realizada
+          Retomar tarefa
         </Button>
 
         <span className="ml-auto text-xs text-muted-foreground">

@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import test from 'node:test'
 import {
   classifyExecutionState,
+  computeBackoffMs,
   createExecution,
+  finalizeBrowserAction,
   pickNextOpportunity,
+  scheduleRetry,
   summarizeExecutionStates,
   transitionExecution,
 } from './execution-engine.ts'
@@ -67,6 +72,50 @@ test('cria execução aprovada na fila e permite concluir uma ação segura', ()
 
   assert.equal(completed.state, 'completed')
   assert.match(completed.evidence ?? '', /Página oficial/)
+})
+
+test('só marca ação realizada quando a ação externa foi confirmada', () => {
+  const queued = createExecution(context())
+  const running = transitionExecution(queued, 'running')
+  const pending = finalizeBrowserAction(running, false, 'Página acessada sem ação.')
+  const completed = finalizeBrowserAction(running, true, 'Formulário enviado e confirmado pela fonte.')
+
+  assert.equal(pending.state, 'blocked')
+  assert.match(pending.error ?? '', /nenhuma ação externa/i)
+  assert.equal(completed.state, 'completed')
+  assert.match(completed.evidence ?? '', /enviado e confirmado/i)
+})
+
+test('agenda retentativa com backoff exponencial após falha do Worker', () => {
+  const queued = createExecution(context())
+  const running = transitionExecution(queued, 'running', {}, '2026-09-15T12:00:00.000Z')
+  const failed = transitionExecution(running, 'failed', {
+    error: 'Browserbase indisponível.',
+  }, '2026-09-15T12:00:05.000Z')
+
+  const retry = scheduleRetry(failed, '2026-09-15T12:00:05.000Z')
+
+  assert.equal(retry.attempt, 2)
+  assert.ok(retry.nextAttemptAt)
+  assert.equal(new Date(retry.nextAttemptAt!).getTime() - new Date('2026-09-15T12:00:05.000Z').getTime(), computeBackoffMs(2))
+  assert.ok(computeBackoffMs(1) < computeBackoffMs(2))
+  assert.ok(computeBackoffMs(10) <= 30 * 60_000)
+})
+
+test('nunca declara "Ação realizada" sem execução comprovada em nenhum componente', async () => {
+  const root = resolve(import.meta.dirname, '..')
+  const files = [
+    'components/pending-item.tsx',
+    'components/running-task-item.tsx',
+    'components/next-action-card.tsx',
+    'components/opportunity-item.tsx',
+    'components/activity-feed.tsx',
+  ]
+
+  for (const file of files) {
+    const content = await readFile(resolve(root, file), 'utf8')
+    assert.doesNotMatch(content, /Ação realizada/, `${file} não deve declarar "Ação realizada" sem evidência de execução`)
+  }
 })
 
 test('encaminha Avaliador em REVISAR para pendência sem bloquear a oportunidade', () => {

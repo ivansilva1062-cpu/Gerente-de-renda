@@ -1065,9 +1065,16 @@ export function AgentProvider({
          * Timeout de segurança: uma oportunidade travada
          * não pode consumir o ciclo inteiro do agente nem
          * ficar presa em "Executando" para sempre.
+         *
+         * Precisa ser maior que `maxDuration` (60s) da rota
+         * /api/worker: com 45s o front abortava (e mostrava
+         * "Worker indisponível") em inspeções que abrem sessão
+         * no Browserbase e navegam a página — o próprio backend
+         * documenta que isso pode levar 30-40s+ por oportunidade
+         * e ainda estava dentro do prazo do servidor.
          */
         const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 45_000)
+        const timeoutId = setTimeout(() => controller.abort(), 65_000)
 
         try {
           const response = await fetch(

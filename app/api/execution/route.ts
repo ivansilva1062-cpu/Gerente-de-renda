@@ -7,6 +7,7 @@ import { type OpportunityInput } from '@/lib/manager-modules'
 import { executionNextStep, planManagerExecution } from '@/lib/manager-execution'
 import {
   isSensitiveAction,
+  finalizeBrowserAction,
   transitionExecution,
   type ExecutionRecord,
 } from '@/lib/execution-engine'
@@ -98,9 +99,11 @@ async function executeSafePage(execution: ExecutionRecord) {
       })
     }
 
-    return transitionExecution(execution, 'completed', {
-      evidence: `Página oficial acessada e preparada sem autenticação ou envio de dados: ${await page.title()}`,
-    })
+    return finalizeBrowserAction(
+      execution,
+      false,
+      `Página oficial acessada, mas nenhuma ação externa foi executada: ${await page.title()}`,
+    )
   } catch (error) {
     return transitionExecution(execution, 'failed', {
       error: error instanceof Error ? error.message : 'Falha desconhecida ao executar ação segura.',

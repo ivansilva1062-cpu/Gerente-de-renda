@@ -5,7 +5,7 @@ export type WorkerCycleCandidate = ManagerExecutionInput & QueueCandidate
 
 export type WorkerCycleResult = {
   id: string
-  state: ExecutionState | 'failed'
+  state: ExecutionState | 'failed' | 'skipped'
   error?: string
 }
 
@@ -76,6 +76,14 @@ export function selectWorkerCycleCandidates<T extends WorkerCycleCandidate>(
  * conta como "terminada" para efeito de concorrência
  * assim que o processamento devolve o resultado —
  * ela nunca impede as demais de avançar.
+ *
+ * `deadlineAt` (timestamp em ms, opcional) impõe um
+ * orçamento de tempo real ao ciclo: ao ser atingido,
+ * o Worker para de INICIAR novas oportunidades — ele
+ * nunca inventa um resultado para quem não rodou, só
+ * marca como "skipped" (nem sucesso, nem falha) para
+ * que a próxima chamada do cron reprocesse. Candidatos
+ * já em andamento continuam até o fim normalmente.
  */
 export async function runWorkerCycle<T extends WorkerCycleCandidate>(
   candidates: T[],
@@ -83,6 +91,7 @@ export async function runWorkerCycle<T extends WorkerCycleCandidate>(
   process: (candidate: T) => Promise<WorkerCycleResult>,
   concurrency = 3,
   maxTotal = 12,
+  deadlineAt?: number,
 ) {
   const selected = selectWorkerCycleCandidates(candidates, excludedIds, maxTotal)
   const results: WorkerCycleResult[] = new Array(selected.length)
@@ -111,6 +120,16 @@ export async function runWorkerCycle<T extends WorkerCycleCandidate>(
       const index = cursor
       cursor += 1
       if (index >= selected.length) return
+
+      if (deadlineAt && Date.now() >= deadlineAt) {
+        results[index] = {
+          id: selected[index].id,
+          state: 'skipped',
+          error: 'Ciclo interrompido pelo orçamento de tempo; será retomado no próximo ciclo do Worker.',
+        }
+        continue
+      }
+
       results[index] = await runOne(selected[index])
     }
   }

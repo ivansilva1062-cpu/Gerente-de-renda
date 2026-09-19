@@ -235,6 +235,21 @@ export function transitionExecution(
   }
 }
 
+export function finalizeBrowserAction(
+  execution: ExecutionRecord,
+  actionConfirmed: boolean,
+  evidence: string,
+) {
+  if (!actionConfirmed) {
+    return transitionExecution(execution, 'blocked', {
+      error: 'Nenhuma ação externa foi executada e confirmada pela fonte oficial.',
+      evidence,
+    })
+  }
+
+  return transitionExecution(execution, 'completed', { evidence })
+}
+
 /*
  * Marca a próxima tentativa (backoff) de uma execução que falhou,
  * sem alterar o estado — quem seleciona candidatos do ciclo do
